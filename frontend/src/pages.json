@@ -1,0 +1,41 @@
+{
+  "pages": [
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "登录"
+      }
+    },
+    {
+      "path": "pages/home/home",
+      "style": {
+        "navigationBarTitleText": "首页"
+      }
+    },
+    {
+      "path": "pages/room/room",
+      "style": {
+        "navigationBarTitleText": "房间"
+      }
+    },
+    {
+      "path": "pages/records/records",
+      "style": {
+        "navigationBarTitleText": "记录",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/settlement/settlement",
+      "style": {
+        "navigationBarTitleText": "结算"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "打牌记账",
+    "navigationBarBackgroundColor": "#F8F8F8",
+    "backgroundColor": "#F8F8F8"
+  }
+}
