@@ -1,4 +1,4 @@
-const BASE_URL = 'http://192.168.154.16:3000/api';
+const BASE_URL = 'http://192.168.2.2:3000/api';
 
 export const request = (options: UniApp.RequestOptions) => {
   return new Promise((resolve, reject) => {

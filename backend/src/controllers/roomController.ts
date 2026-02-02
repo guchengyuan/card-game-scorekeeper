@@ -66,7 +66,7 @@ export const joinRoom = async (req: Request, res: Response) => {
       .single();
 
     if (roomError || !room) {
-      return res.status(404).json({ success: false, message: 'Room not found' });
+      return res.status(404).json({ success: false, message: '房间不存在，请检查房间号' });
     }
 
     // 检查房间是否已满
@@ -78,13 +78,13 @@ export const joinRoom = async (req: Request, res: Response) => {
     if (playersError) throw playersError;
 
     if (players.length >= room.max_players) {
-      return res.status(400).json({ success: false, message: 'Room is full' });
+      return res.status(400).json({ success: false, message: '房间人数已满' });
     }
 
     // 检查是否已经加入
     const existingPlayer = players.find((p: any) => p.user_id === userId);
     if (existingPlayer) {
-      return res.json({ success: true, data: room, message: 'Already joined' });
+      return res.json({ success: true, data: room, message: '您已在房间中' });
     }
 
     // 获取用户信息
@@ -112,6 +112,45 @@ export const joinRoom = async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ success: false, message: err.message || 'Join room failed' });
+  }
+};
+
+export const addMockPlayers = async (req: Request, res: Response) => {
+  const { roomId } = req.body;
+
+  try {
+    const mockPlayers = [
+      {
+        nickname: '张三',
+        avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix',
+        is_online: true
+      },
+      {
+        nickname: '李四',
+        avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Aneka',
+        is_online: true
+      },
+      {
+        nickname: '王五',
+        avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Bob',
+        is_online: true
+      }
+    ];
+
+    for (const player of mockPlayers) {
+      await supabase.from('players').insert({
+        room_id: roomId,
+        nickname: player.nickname,
+        avatar: player.avatar,
+        is_online: player.is_online
+        // 注意：这里没有 user_id，因为是假数据
+      });
+    }
+
+    res.json({ success: true, message: 'Mock players added' });
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Failed to add mock players' });
   }
 };
 

@@ -44,7 +44,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { onLoad, onPullDownRefresh } from '@dcloudio/uni-app';
-import request from '../../utils/request';
+import { request } from '../../utils/request';
 import { useUserStore } from '../../stores/user';
 
 const userStore = useUserStore();

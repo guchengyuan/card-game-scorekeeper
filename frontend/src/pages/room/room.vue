@@ -6,9 +6,11 @@
     </view>
 
     <view class="players-grid">
-      <view v-for="player in players" :key="player.id" class="player-card">
+      <view v-for="player in players" :key="player.id" class="player-card" @click="handlePlayerClick(player)">
         <image :src="player.avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'" class="avatar" />
-        <text class="nickname">{{ player.nickname }}</text>
+        <text class="nickname" :class="{ 'is-me': player.user_id === userStore.userInfo?.id }">
+          {{ player.user_id === userStore.userInfo?.id ? '我' : player.nickname }}
+        </text>
         <text class="balance" :class="{ positive: player.balance > 0, negative: player.balance < 0 }">
           {{ player.balance > 0 ? '+' : '' }}{{ player.balance }}
         </text>
@@ -17,7 +19,8 @@
     </view>
 
     <view class="action-bar">
-      <button class="action-btn pay-btn" @click="openPaymentModal">记账</button>
+      <button class="action-btn share-btn" open-type="share">邀请好友</button>
+      <button class="action-btn test-btn" @click="addMockPlayers">添加假人</button>
       <button class="action-btn record-btn" @click="viewRecords">记录</button>
       <button v-if="isOwner" class="action-btn end-btn" @click="endGame">结束</button>
     </view>
@@ -29,16 +32,12 @@
         
         <view class="form-item">
           <text class="label">付款人</text>
-          <picker :range="players" range-key="nickname" @change="onPayerChange">
-            <view class="picker-value">{{ selectedPayer?.nickname || '请选择' }}</view>
-          </picker>
+          <view class="static-value">{{ selectedPayer?.user_id === userStore.userInfo?.id ? '我' : selectedPayer?.nickname }}</view>
         </view>
 
         <view class="form-item">
           <text class="label">收款人</text>
-          <picker :range="players" range-key="nickname" @change="onPayeeChange">
-            <view class="picker-value">{{ selectedPayee?.nickname || '请选择' }}</view>
-          </picker>
+          <view class="static-value">{{ selectedPayee?.nickname }}</view>
         </view>
 
         <view class="form-item">
@@ -56,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { onLoad, onUnload } from '@dcloudio/uni-app'
+import { onLoad, onUnload, onShareAppMessage } from '@dcloudio/uni-app'
 import { ref, computed } from 'vue'
 import { useUserStore } from '../../stores/user'
 import { request } from '../../utils/request'
@@ -77,11 +76,26 @@ const isOwner = computed(() => {
   return roomInfo.value?.owner_id === userStore.userInfo?.id
 })
 
+// 计算可选的收款人列表（排除付款人自己）
+const getPayeeOptions = computed(() => {
+  if (!selectedPayer.value) return []
+  return players.value.filter(p => p.id !== selectedPayer.value.id)
+})
+
 onLoad(async (options: any) => {
   if (options.id) {
     roomId.value = options.id
     await fetchRoomInfo()
     initSocket()
+  }
+})
+
+// 分享给好友
+onShareAppMessage(() => {
+  return {
+    title: `来来来，加入房间[${roomInfo.value?.code}]一起打牌！`,
+    path: `/pages/home/home?action=join&roomCode=${roomInfo.value?.code}`,
+    imageUrl: '/static/share-cover.png' // 可选：自定义分享图片
   }
 })
 
@@ -118,10 +132,25 @@ const fetchRoomInfo = async () => {
   }
 }
 
-const openPaymentModal = () => {
+// 点击玩家头像触发记账
+const handlePlayerClick = (targetPlayer: any) => {
+  // 1. 如果点击的是自己，不进行任何操作
+  if (targetPlayer.user_id === userStore.userInfo?.id) {
+    return
+  }
+
+  // 2. 点击的是其他人，则：自己是付款人，被点击的人是收款人
+  const myself = players.value.find(p => p.user_id === userStore.userInfo?.id)
+  
+  if (!myself) {
+    uni.showToast({ title: '无法获取用户信息', icon: 'none' })
+    return
+  }
+
+  selectedPayer.value = myself
+  selectedPayee.value = targetPlayer
+  amount.value = ''
   showPaymentModal.value = true
-  // 默认付款人选自己
-  selectedPayer.value = players.value.find(p => p.user_id === userStore.userInfo.id)
 }
 
 const closePaymentModal = () => {
@@ -131,22 +160,14 @@ const closePaymentModal = () => {
   amount.value = ''
 }
 
-const onPayerChange = (e: any) => {
-  selectedPayer.value = players.value[e.detail.value]
-}
-
 const onPayeeChange = (e: any) => {
-  selectedPayee.value = players.value[e.detail.value]
+  // 注意：这里需要从 getPayeeOptions 中取值
+  selectedPayee.value = getPayeeOptions.value[e.detail.value]
 }
 
 const confirmPayment = async () => {
   if (!selectedPayer.value || !selectedPayee.value || !amount.value) {
     uni.showToast({ title: '请填写完整', icon: 'none' })
-    return
-  }
-
-  if (selectedPayer.value.id === selectedPayee.value.id) {
-    uni.showToast({ title: '付款人和收款人不能相同', icon: 'none' })
     return
   }
 
@@ -170,6 +191,24 @@ const confirmPayment = async () => {
         transaction: res.data.transaction
       })
       closePaymentModal()
+    }
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+const addMockPlayers = async () => {
+  try {
+    const res: any = await request({
+      url: '/room/mock',
+      method: 'POST',
+      data: { roomId: roomId.value }
+    })
+    
+    if (res.success) {
+      uni.showToast({ title: '添加成功', icon: 'success' })
+      // 刷新房间信息
+      fetchRoomInfo()
     }
   } catch (error) {
     console.error(error)
@@ -253,6 +292,11 @@ const endGame = () => {
   margin-bottom: 10rpx;
 }
 
+.nickname.is-me {
+  color: #ff6b35; /* 醒目的橙色 */
+  font-weight: bold;
+}
+
 .balance {
   font-size: 40rpx;
   font-weight: bold;
@@ -276,6 +320,8 @@ const endGame = () => {
   top: 20rpx;
   right: 20rpx;
 }
+
+
 
 .status-dot.online {
   background-color: #00d4ff;
@@ -304,6 +350,11 @@ const endGame = () => {
 
 .pay-btn {
   background: linear-gradient(90deg, #7b68ee, #00d4ff);
+  color: #fff;
+}
+
+.test-btn {
+  background: #20b2aa;
   color: #fff;
 }
 

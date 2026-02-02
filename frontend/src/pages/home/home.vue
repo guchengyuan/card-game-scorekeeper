@@ -21,8 +21,46 @@
 <script setup lang="ts">
 import { useUserStore } from '../../stores/user';
 import { request } from '../../utils/request';
+import { onLoad } from '@dcloudio/uni-app';
 
 const userStore = useUserStore();
+
+onLoad((options: any) => {
+  // 如果是扫码进入，自动执行加入房间逻辑
+  if (options.action === 'join' && options.roomCode) {
+    joinRoomByCode(options.roomCode);
+  }
+});
+
+const joinRoomByCode = async (roomCode: string) => {
+  uni.showLoading({ title: '加入中...' });
+  try {
+    const joinRes: any = await request({
+      url: '/room/join',
+      method: 'POST',
+      data: {
+        userId: userStore.userInfo.id,
+        roomCode: roomCode
+      }
+    });
+
+    if (joinRes.success) {
+      uni.navigateTo({
+        url: `/pages/room/room?id=${joinRes.data.id}`
+      });
+    }
+  } catch (error: any) {
+    console.error(error);
+    if (error.data && error.data.message) {
+      uni.showToast({
+        title: error.data.message,
+        icon: 'none'
+      });
+    }
+  } finally {
+    uni.hideLoading();
+  }
+};
 
 const handleCreateRoom = async () => {
   uni.showLoading({ title: '创建中...' });
@@ -55,27 +93,7 @@ const handleJoinRoom = () => {
     placeholderText: '请输入6位房间号',
     success: async (res) => {
       if (res.confirm && res.content) {
-        uni.showLoading({ title: '加入中...' });
-        try {
-          const joinRes: any = await request({
-            url: '/room/join',
-            method: 'POST',
-            data: {
-              userId: userStore.userInfo.id,
-              roomCode: res.content
-            }
-          });
-
-          if (joinRes.success) {
-            uni.navigateTo({
-              url: `/pages/room/room?id=${joinRes.data.id}`
-            });
-          }
-        } catch (error) {
-          console.error(error);
-        } finally {
-          uni.hideLoading();
-        }
+        joinRoomByCode(res.content);
       }
     }
   });
