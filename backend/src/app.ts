@@ -105,6 +105,65 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('exit-room', async ({ roomId, userId }) => {
+    socket.leave(roomId);
+    console.log(`User ${userId} exit room ${roomId}`);
+
+    try {
+      const { data: room, error: roomError } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('id', roomId)
+        .single();
+      if (roomError) throw roomError;
+
+      const wasOwner = room?.owner_id === userId;
+
+      await supabase
+        .from('players')
+        .delete()
+        .eq('user_id', userId)
+        .eq('room_id', roomId);
+
+      if (wasOwner) {
+        const { data: nextPlayers, error: nextPlayersError } = await supabase
+          .from('players')
+          .select('user_id, joined_at')
+          .eq('room_id', roomId)
+          .not('user_id', 'is', null)
+          .order('joined_at', { ascending: true })
+          .limit(1);
+        if (nextPlayersError) throw nextPlayersError;
+
+        const nextOwnerId = nextPlayers?.[0]?.user_id ?? null;
+        const { error: ownerUpdateError } = await supabase
+          .from('rooms')
+          .update({ owner_id: nextOwnerId })
+          .eq('id', roomId);
+        if (ownerUpdateError) throw ownerUpdateError;
+      }
+
+      const { data: updatedRoom, error: updatedRoomError } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('id', roomId)
+        .single();
+      if (updatedRoomError) throw updatedRoomError;
+
+      const { data: players } = await supabase
+        .from('players')
+        .select('*')
+        .eq('room_id', roomId);
+
+      if (players) {
+        io.to(roomId).emit('players-updated', players);
+      }
+      io.to(roomId).emit('room-updated', updatedRoom);
+    } catch (err) {
+      console.error('Error exiting room:', err);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
   });

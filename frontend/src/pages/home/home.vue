@@ -5,9 +5,9 @@
     </view>
     
     <view class="action-area">
-      <view class="card create-room" @click="handleCreateRoom">
-        <text class="card-title">创建房间</text>
-        <text class="card-desc">作为房主发起游戏</text>
+      <view class="card create-room" @click="handlePrimaryCardClick">
+        <text class="card-title">{{ userStore.lastRoomId ? '我的房间' : '创建房间' }}</text>
+        <text class="card-desc">{{ userStore.lastRoomId ? myRoomDesc : '作为房主发起游戏' }}</text>
       </view>
       
       <view class="card join-room" @click="handleJoinRoom">
@@ -21,9 +21,11 @@
 <script setup lang="ts">
 import { useUserStore } from '../../stores/user';
 import { request } from '../../utils/request';
-import { onLoad } from '@dcloudio/uni-app';
+import { onLoad, onShow } from '@dcloudio/uni-app';
+import { ref } from 'vue';
 
 const userStore = useUserStore();
+const myRoomDesc = ref('点击返回房间');
 
 onLoad((options: any) => {
   // 如果是扫码进入，自动执行加入房间逻辑
@@ -32,7 +34,38 @@ onLoad((options: any) => {
   }
 });
 
+onShow(() => {
+  refreshMyRoomInfo();
+});
+
+const refreshMyRoomInfo = async () => {
+  if (!userStore.lastRoomId) {
+    myRoomDesc.value = '点击返回房间';
+    return;
+  }
+  try {
+    const res: any = await request({
+      url: `/room/${userStore.lastRoomId}`,
+      method: 'GET'
+    });
+    if (res.success) {
+      const name = res.data?.name;
+      const code = res.data?.code;
+      const parts = [name, code ? `房间号：${code}` : ''].filter(Boolean);
+      myRoomDesc.value = parts.length > 0 ? parts.join(' · ') : '点击返回房间';
+    } else {
+      userStore.clearLastRoomId();
+      myRoomDesc.value = '点击返回房间';
+    }
+  } catch {
+    myRoomDesc.value = '点击返回房间';
+  }
+};
+
 const joinRoomByCode = async (roomCode: string) => {
+  const { roomPassword, canceled } = await promptPassword('请输入房间密码')
+  if (canceled) return
+
   uni.showLoading({ title: '加入中...' });
   try {
     const joinRes: any = await request({
@@ -40,11 +73,13 @@ const joinRoomByCode = async (roomCode: string) => {
       method: 'POST',
       data: {
         userId: userStore.userInfo.id,
-        roomCode: roomCode
+        roomCode: roomCode,
+        password: roomPassword
       }
     });
 
     if (joinRes.success) {
+      userStore.setLastRoomId(joinRes.data.id);
       uni.navigateTo({
         url: `/pages/room/room?id=${joinRes.data.id}`
       });
@@ -63,6 +98,9 @@ const joinRoomByCode = async (roomCode: string) => {
 };
 
 const handleCreateRoom = async () => {
+  const { roomPassword, canceled } = await promptPassword('设置6位数字密码')
+  if (canceled) return
+
   uni.showLoading({ title: '创建中...' });
   try {
     const res: any = await request({
@@ -70,11 +108,13 @@ const handleCreateRoom = async () => {
       method: 'POST',
       data: {
         userId: userStore.userInfo.id,
-        name: `${userStore.userInfo.nickname}的房间`
+        name: `${userStore.userInfo.nickname}的房间`,
+        password: roomPassword
       }
     });
 
     if (res.success) {
+      userStore.setLastRoomId(res.data.id);
       uni.navigateTo({
         url: `/pages/room/room?id=${res.data.id}`
       });
@@ -84,6 +124,16 @@ const handleCreateRoom = async () => {
   } finally {
     uni.hideLoading();
   }
+};
+
+const handlePrimaryCardClick = () => {
+  if (userStore.lastRoomId) {
+    uni.navigateTo({
+      url: `/pages/room/room?id=${userStore.lastRoomId}`
+    });
+    return;
+  }
+  handleCreateRoom();
 };
 
 const handleJoinRoom = () => {
@@ -98,6 +148,29 @@ const handleJoinRoom = () => {
     }
   });
 };
+
+const promptPassword = (title: string) => {
+  return new Promise<{ roomPassword: string; canceled: boolean }>((resolve) => {
+    uni.showModal({
+      title,
+      editable: true,
+      placeholderText: '请输入6位数字密码',
+      success: (res) => {
+        const pwd = String((res as any).content || '')
+        if (!res.confirm) {
+          resolve({ roomPassword: '', canceled: true })
+          return
+        }
+        if (!/^\d{6}$/.test(pwd)) {
+          uni.showToast({ title: '请输入6位数字密码', icon: 'none' })
+          resolve({ roomPassword: '', canceled: true })
+          return
+        }
+        resolve({ roomPassword: pwd, canceled: false })
+      }
+    })
+  })
+}
 </script>
 
 <style>

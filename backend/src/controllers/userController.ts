@@ -2,11 +2,11 @@ import { Request, Response } from 'express';
 import { supabase } from '../config/db';
 
 export const login = async (req: Request, res: Response) => {
-  const { code, userInfo } = req.body;
+  const { code, userInfo, openid: providedOpenid } = req.body;
 
   // 在实际生产环境中，这里需要调用微信 API (jscode2session) 来获取 openid
   // 为了演示方便，我们这里模拟一个 openid，或者直接使用客户端传来的 mock openid
-  const openid = `mock_openid_${code}`; 
+  const openid = providedOpenid ? String(providedOpenid) : `mock_openid_${code}`; 
 
   try {
     // 检查用户是否存在
@@ -54,6 +54,6 @@ export const login = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ success: false, message: err.message || 'Server error' });
+    res.status(500).json({ success: false, message: '登录失败，请稍后重试' });
   }
 };

@@ -1,48 +1,54 @@
 <template>
-  <div class="container">
-    <div class="header">
+  <view class="container">
+    <view class="header">
       <text class="title">交易记录</text>
-    </div>
+    </view>
 
     <scroll-view scroll-y class="list-container">
-      <div v-if="transactions.length === 0" class="empty-state">
+      <view v-if="transactions.length === 0" class="empty-state">
         <text class="empty-text">暂无交易记录</text>
-      </div>
+      </view>
       
-      <div v-else class="transaction-list">
-        <div v-for="item in transactions" :key="item.id" class="transaction-card">
-          <div class="card-header">
-            <text class="time">{{ formatDate(item.created_at) }}</text>
-          </div>
-          
-          <div class="card-body">
-            <div class="player-info">
-              <image class="avatar" :src="item.from_player_avatar || '/static/default-avatar.png'" mode="aspectFill"></image>
-              <text class="nickname">{{ item.from_player_name }}</text>
-            </div>
-            
-            <div class="transfer-info">
-              <text class="arrow">-></text>
-              <text class="amount">{{ item.amount }} 积分</text>
-            </div>
-            
-            <div class="player-info">
-              <image class="avatar" :src="item.to_player_avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'" mode="aspectFill"></image>
-              <text class="nickname">{{ item.to_player_name }}</text>
-            </div>
-          </div>
-          
-          <div class="card-footer" v-if="item.description">
-            <text class="description">备注: {{ item.description }}</text>
-          </div>
-        </div>
-      </div>
+      <view v-else class="transaction-list">
+        <view v-for="group in groupedTransactions" :key="group.key" class="time-group">
+          <view class="time-sep">
+            <text class="time-sep-text">{{ group.label }}</text>
+          </view>
+          <view v-for="item in group.items" :key="item.id" class="transaction-row">
+            <view class="tx-line">
+              <view class="tx-player">
+                <image
+                  class="tx-avatar payer"
+                  :src="item.from_player_avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'"
+                  mode="aspectFill"
+                />
+                <text class="tx-name payer">{{ item.from_player_name || '未知' }}</text>
+              </view>
+
+              <text class="tx-muted tx-word">向</text>
+
+              <view class="tx-player">
+                <image
+                  class="tx-avatar payee"
+                  :src="item.to_player_avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'"
+                  mode="aspectFill"
+                />
+                <text class="tx-name payee">{{ item.to_player_name || '未知' }}</text>
+              </view>
+
+              <text class="tx-muted tx-word">支付</text>
+              <text class="tx-amount">{{ item.amount }}</text>
+              <text class="tx-muted">积分</text>
+            </view>
+          </view>
+        </view>
+      </view>
     </scroll-view>
-  </div>
+  </view>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { onLoad, onPullDownRefresh } from '@dcloudio/uni-app';
 import { request } from '../../utils/request';
 import { useUserStore } from '../../stores/user';
@@ -55,8 +61,8 @@ onLoad((options) => {
   if (options && options.roomId) {
     roomId.value = options.roomId;
     fetchTransactions();
-  } else if (userStore.userInfo?.roomId) {
-    roomId.value = userStore.userInfo.roomId;
+  } else if (userStore.lastRoomId) {
+    roomId.value = userStore.lastRoomId;
     fetchTransactions();
   }
 });
@@ -70,7 +76,7 @@ const fetchTransactions = async () => {
   
   try {
     const res = await request({
-      url: `/transactions/room/${roomId.value}`,
+      url: `/transaction/room/${roomId.value}`,
       method: 'GET'
     });
     
@@ -78,27 +84,71 @@ const fetchTransactions = async () => {
       transactions.value = res.data;
     }
   } catch (error) {
-    console.error('Fetch transactions failed:', error);
+    console.error('获取交易记录失败:', error);
     uni.showToast({ title: '加载失败', icon: 'none' });
   } finally {
     uni.stopPullDownRefresh();
   }
 };
 
-const formatDate = (dateStr: string) => {
-  const date = new Date(dateStr);
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-};
+const formatChatTime = (dateStr: string) => {
+  const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const now = new Date()
+  const isSameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+
+  const options: Intl.DateTimeFormatOptions = isSameDay
+    ? { hour: '2-digit', minute: '2-digit' }
+    : { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+
+  return date.toLocaleString('zh-CN', options)
+}
+
+const groupedTransactions = computed(() => {
+  const thresholdMinutes = 5
+  const thresholdMs = thresholdMinutes * 60 * 1000
+
+  const list = [...(transactions.value || [])]
+    .filter(Boolean)
+    .sort((a: any, b: any) => new Date(b?.created_at).getTime() - new Date(a?.created_at).getTime())
+
+  const groups: Array<{ key: string; label: string; items: any[] }> = []
+  let current: { key: string; label: string; items: any[] } | null = null
+  let lastTime: number | null = null
+
+  for (const item of list) {
+    const createdAt = String(item?.created_at || '')
+    const time = createdAt ? new Date(createdAt).getTime() : NaN
+    const hasTime = Number.isFinite(time)
+
+    const shouldStartNew =
+      !current ||
+      !hasTime ||
+      lastTime === null ||
+      (Number.isFinite(lastTime) && Number.isFinite(time) && Math.abs(lastTime - time) >= thresholdMs)
+
+    if (shouldStartNew) {
+      const label = hasTime ? formatChatTime(createdAt) : ''
+      const key = `${createdAt || 'no_time'}_${item?.id || Math.random()}`
+      current = { key, label, items: [] }
+      groups.push(current)
+    }
+
+    current.items.push(item)
+    if (hasTime) lastTime = time
+  }
+
+  return groups
+})
 </script>
 
 <style>
 .container {
-  padding: 20px;
+  padding: 30rpx;
   background-color: #1a1a2e;
   min-height: 100vh;
   display: flex;
@@ -107,13 +157,13 @@ const formatDate = (dateStr: string) => {
 }
 
 .header {
-  margin-bottom: 20px;
+  margin-bottom: 30rpx;
   display: flex;
   justify-content: center;
 }
 
 .title {
-  font-size: 20px;
+  font-size: 36rpx;
   font-weight: bold;
   color: #fff;
 }
@@ -127,96 +177,105 @@ const formatDate = (dateStr: string) => {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 200px;
+  height: 400rpx;
 }
 
 .empty-text {
   color: #a0a0a0;
-  font-size: 14px;
+  font-size: 28rpx;
 }
 
 .transaction-list {
-  padding-bottom: 20px;
+  padding-bottom: 30rpx;
 }
 
-.transaction-card {
+.time-group {
+  margin-bottom: 24rpx;
+}
+
+.time-sep {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16rpx;
+}
+
+.time-sep-text {
+  font-size: 24rpx;
+  color: #c9c9c9;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 6rpx 16rpx;
+  border-radius: 999rpx;
+}
+
+.transaction-row {
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 12px;
+  border-radius: 16rpx;
+  padding: 26rpx 24rpx;
+  margin-bottom: 20rpx;
 }
 
-.card-header {
-  margin-bottom: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  padding-bottom: 8px;
-}
-
-.time {
-  font-size: 12px;
-  color: #a0a0a0;
-}
-
-.card-body {
+.tx-line {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  align-items: flex-end;
+  gap: 12rpx;
 }
 
-.player-info {
+.tx-muted {
+  color: #a0a0a0;
+  font-size: 28rpx;
+  line-height: 34rpx;
+}
+
+.tx-word {
+  line-height: 34rpx;
+}
+
+.tx-player {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 80px;
+  width: 120rpx;
 }
 
-.avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 20px;
-  margin-bottom: 4px;
-  background-color: #eee;
-  border: 1px solid #7b68ee;
+.tx-avatar {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  margin-bottom: 10rpx;
 }
 
-.nickname {
-  font-size: 12px;
-  color: #fff;
+.tx-avatar.payer {
+  border: 2rpx solid #00d4ff;
+}
+
+.tx-avatar.payee {
+  border: 2rpx solid #7b68ee;
+}
+
+.tx-name {
+  font-weight: 700;
+  font-size: 26rpx;
+  line-height: 34rpx;
+  width: 100%;
   text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  width: 100%;
 }
 
-.transfer-info {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  flex: 1;
+.tx-name.payer {
+  color: #00d4ff;
 }
 
-.arrow {
-  font-size: 16px;
-  color: #a0a0a0;
-  margin-bottom: 4px;
+.tx-name.payee {
+  color: #7b68ee;
 }
 
-.amount {
-  font-size: 18px;
-  font-weight: bold;
-  color: #ff5a5f;
-}
-
-.card-footer {
-  margin-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  padding-top: 8px;
-}
-
-.description {
-  font-size: 12px;
-  color: #a0a0a0;
+.tx-amount {
+  font-weight: 800;
+  color: #ff6b35;
+  font-size: 32rpx;
+  line-height: 34rpx;
 }
 </style>

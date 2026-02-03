@@ -7,9 +7,14 @@ const generateRoomCode = () => {
 };
 
 export const createRoom = async (req: Request, res: Response) => {
-  const { userId, name, maxPlayers } = req.body;
+  const { userId, name, maxPlayers, password } = req.body;
 
   try {
+    const pwd = String(password || '');
+    if (!/^\d{6}$/.test(pwd)) {
+      return res.status(400).json({ success: false, message: '请输入6位数字密码' });
+    }
+
     const code = generateRoomCode();
     
     // 创建房间
@@ -18,6 +23,7 @@ export const createRoom = async (req: Request, res: Response) => {
       .insert({ 
         name, 
         code, 
+        password: pwd,
         owner_id: userId, 
         max_players: maxPlayers || 4 
       })
@@ -50,14 +56,19 @@ export const createRoom = async (req: Request, res: Response) => {
     res.json({ success: true, data: room });
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ success: false, message: err.message || 'Create room failed' });
+    res.status(500).json({ success: false, message: '创建房间失败' });
   }
 };
 
 export const joinRoom = async (req: Request, res: Response) => {
-  const { userId, roomCode } = req.body;
+  const { userId, roomCode, password } = req.body;
 
   try {
+    const pwd = String(password || '');
+    if (!/^\d{6}$/.test(pwd)) {
+      return res.status(400).json({ success: false, message: '请输入6位数字密码' });
+    }
+
     // 查找房间
     const { data: room, error: roomError } = await supabase
       .from('rooms')
@@ -67,6 +78,10 @@ export const joinRoom = async (req: Request, res: Response) => {
 
     if (roomError || !room) {
       return res.status(404).json({ success: false, message: '房间不存在，请检查房间号' });
+    }
+
+    if (String(room.password || '') !== pwd) {
+      return res.status(400).json({ success: false, message: '密码错误' });
     }
 
     // 检查房间是否已满
@@ -111,7 +126,7 @@ export const joinRoom = async (req: Request, res: Response) => {
     res.json({ success: true, data: room });
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ success: false, message: err.message || 'Join room failed' });
+    res.status(500).json({ success: false, message: '加入房间失败' });
   }
 };
 
@@ -119,38 +134,28 @@ export const addMockPlayers = async (req: Request, res: Response) => {
   const { roomId } = req.body;
 
   try {
-    const mockPlayers = [
-      {
-        nickname: '张三',
-        avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix',
-        is_online: true
-      },
-      {
-        nickname: '李四',
-        avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Aneka',
-        is_online: true
-      },
-      {
-        nickname: '王五',
-        avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Bob',
-        is_online: true
-      }
-    ];
+    const mockNames = ['张三', '李四', '王五', '赵六', '孙七'];
+    const randomName = mockNames[Math.floor(Math.random() * mockNames.length)];
+    const randomSeed = Math.random().toString(36).substring(7);
 
-    for (const player of mockPlayers) {
-      await supabase.from('players').insert({
-        room_id: roomId,
-        nickname: player.nickname,
-        avatar: player.avatar,
-        is_online: player.is_online
-        // 注意：这里没有 user_id，因为是假数据
-      });
-    }
+    const player = {
+      nickname: randomName,
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${randomSeed}`,
+      is_online: true
+    };
 
-    res.json({ success: true, message: 'Mock players added' });
+    await supabase.from('players').insert({
+      room_id: roomId,
+      nickname: player.nickname,
+      avatar: player.avatar,
+      is_online: player.is_online
+      // 注意：这里没有 user_id，因为是假数据
+    });
+
+    res.json({ success: true, message: '添加假人成功' });
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ success: false, message: 'Failed to add mock players' });
+    res.status(500).json({ success: false, message: '添加假人失败' });
   }
 };
 
@@ -165,7 +170,7 @@ export const getRoomInfo = async (req: Request, res: Response) => {
       .single();
 
     if (roomError || !room) {
-      return res.status(404).json({ success: false, message: 'Room not found' });
+      return res.status(404).json({ success: false, message: '房间不存在' });
     }
     
     const { data: players, error: playersError } = await supabase
@@ -184,6 +189,6 @@ export const getRoomInfo = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ success: false, message: 'Server error' });
+    res.status(500).json({ success: false, message: '服务器错误' });
   }
 };

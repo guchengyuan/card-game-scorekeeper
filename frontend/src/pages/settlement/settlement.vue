@@ -1,49 +1,50 @@
 <template>
-  <div class="container">
-    <div class="header">
+  <view class="container">
+    <view class="header">
       <text class="title">最终结算</text>
-      <text class="subtitle">牌局结束，请按以下方案结清</text>
-    </div>
+      <text v-if="settlements.length > 0" class="subtitle">牌局结束，请按以下方案结清</text>
+    </view>
 
     <scroll-view scroll-y class="list-container">
-      <div v-if="settlements.length === 0" class="empty-state">
+      <view v-if="settlements.length === 0" class="empty-state">
         <text class="empty-text">无需结算，大家都扯平了！</text>
-      </div>
+      </view>
       
-      <div v-else class="settlement-list">
-        <div v-for="(item, index) in settlements" :key="index" class="settlement-card">
-          <div class="card-body">
-            <div class="player-info payer">
+      <view v-else class="settlement-list">
+        <view v-for="(item, index) in settlements" :key="index" class="settlement-card">
+          <view class="card-body">
+            <view class="player-info payer">
               <image class="avatar" :src="item.fromPlayerAvatar || '/static/default-avatar.png'" mode="aspectFill"></image>
               <text class="nickname">{{ item.fromPlayerName }}</text>
               <text class="role-tag pay">支付</text>
-            </div>
+            </view>
             
-            <div class="transfer-info">
-              <div class="line"></div>
+            <view class="transfer-info">
               <text class="amount">{{ item.amount }} 积分</text>
-              <text class="arrow">>></text>
-            </div>
+              <view class="transfer-arrow">
+                <view class="arrow-head"></view>
+              </view>
+            </view>
             
-            <div class="player-info payee">
+            <view class="player-info payee">
               <image class="avatar" :src="item.toPlayerAvatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'" mode="aspectFill"></image>
               <text class="nickname">{{ item.toPlayerName }}</text>
               <text class="role-tag receive">收取</text>
-            </div>
-          </div>
-        </div>
-      </div>
+            </view>
+          </view>
+        </view>
+      </view>
     </scroll-view>
     
-    <div class="footer">
+    <view class="footer">
       <button class="btn-home" @click="goHome">返回首页</button>
-    </div>
-  </div>
+    </view>
+  </view>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { onLoad } from '@dcloudio/uni-app';
+import { onLoad, onUnload } from '@dcloudio/uni-app';
 import { request } from '../../utils/request';
 import { useUserStore } from '../../stores/user';
 
@@ -51,22 +52,30 @@ const userStore = useUserStore();
 const settlements = ref<any[]>([]);
 const roomId = ref('');
 
+const exitRoom = () => {
+  userStore.clearLastRoomId()
+}
+
 onLoad((options) => {
   if (options && options.roomId) {
     roomId.value = options.roomId;
     fetchSettlement();
-  } else if (userStore.userInfo?.roomId) {
-    roomId.value = userStore.userInfo.roomId;
+  } else if (userStore.lastRoomId) {
+    roomId.value = userStore.lastRoomId;
     fetchSettlement();
   }
 });
+
+onUnload(() => {
+  exitRoom()
+})
 
 const fetchSettlement = async () => {
   if (!roomId.value) return;
   
   try {
     const res = await request({
-      url: `/transactions/settlement/${roomId.value}`,
+      url: `/transaction/settlement/${roomId.value}`,
       method: 'GET'
     });
     
@@ -74,14 +83,13 @@ const fetchSettlement = async () => {
       settlements.value = res.data;
     }
   } catch (error) {
-    console.error('Fetch settlement failed:', error);
+    console.error('获取结算结果失败:', error);
     uni.showToast({ title: '加载失败', icon: 'none' });
   }
 };
 
 const goHome = () => {
-  // Clear room info from store if needed, or just navigate back
-  // For now, just navigate to home
+  exitRoom()
   uni.reLaunch({
     url: '/pages/home/home'
   });
@@ -209,10 +217,23 @@ const goHome = () => {
   margin: 4px 0;
 }
 
-.arrow {
-  font-size: 12px;
-  color: #a0a0a0;
-  letter-spacing: 2px;
+.transfer-arrow {
+  width: 120px;
+  height: 2px;
+  background: linear-gradient(to right, rgba(123, 104, 238, 0.2), #7b68ee);
+  position: relative;
+  margin-top: 10px;
+}
+
+.arrow-head {
+  position: absolute;
+  right: -2px;
+  top: -7px;
+  width: 0;
+  height: 0;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 10px solid #7b68ee;
 }
 
 .footer {

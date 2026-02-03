@@ -6,43 +6,69 @@
     </view>
 
     <view class="players-grid">
-      <view v-for="player in players" :key="player.id" class="player-card" @click="handlePlayerClick(player)">
+      <view v-for="player in orderedPlayers" :key="player.id" class="player-card" @click="handlePlayerClick(player)">
+        <view v-if="isRoomOwnerPlayer(player)" class="owner-badge">房主</view>
         <image :src="player.avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'" class="avatar" />
         <text class="nickname" :class="{ 'is-me': player.user_id === userStore.userInfo?.id }">
           {{ player.user_id === userStore.userInfo?.id ? '我' : player.nickname }}
         </text>
         <text class="balance" :class="{ positive: player.balance > 0, negative: player.balance < 0 }">
-          {{ player.balance > 0 ? '+' : '' }}{{ player.balance }}
+          <text class="balance-label">积分：</text>
+          <text class="balance-value">{{ player.balance > 0 ? '+' : '' }}{{ player.balance }}</text>
         </text>
         <view class="status-dot" :class="{ online: player.is_online }"></view>
       </view>
+
+      <button class="player-card invite-card" open-type="share">
+        <text class="invite-plus">＋</text>
+        <text class="invite-text">邀请好友</text>
+      </button>
     </view>
 
     <view class="action-bar">
-      <button class="action-btn share-btn" open-type="share">邀请好友</button>
       <button class="action-btn test-btn" @click="addMockPlayers">添加假人</button>
       <button class="action-btn record-btn" @click="viewRecords">记录</button>
-      <button v-if="isOwner" class="action-btn end-btn" @click="endGame">结束</button>
+      <button class="action-btn end-btn" @click="endGame">结束</button>
     </view>
 
     <!-- 记账弹窗 -->
     <view v-if="showPaymentModal" class="modal-mask">
       <view class="modal-content">
         <text class="modal-title">记一笔</text>
-        
-        <view class="form-item">
-          <text class="label">付款人</text>
-          <view class="static-value">{{ selectedPayer?.user_id === userStore.userInfo?.id ? '我' : selectedPayer?.nickname }}</view>
+
+        <view class="payee-header">
+          <image
+            :src="selectedPayee?.avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'"
+            class="avatar-large"
+          />
+          <text class="payee-score">积分：{{ selectedPayee?.balance > 0 ? '+' : '' }}{{ selectedPayee?.balance }}</text>
         </view>
 
-        <view class="form-item">
-          <text class="label">收款人</text>
-          <view class="static-value">{{ selectedPayee?.nickname }}</view>
+        <view class="transfer-flow">
+          <view class="player-node">
+            <image
+              :src="selectedPayer?.avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'"
+              class="avatar-small"
+            />
+            <text class="player-name">{{ selectedPayer?.user_id === userStore.userInfo?.id ? '我' : selectedPayer?.nickname }}</text>
+          </view>
+
+          <view class="transfer-arrow">
+            <view class="arrow-head"></view>
+          </view>
+
+          <view class="player-node">
+            <image
+              :src="selectedPayee?.avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'"
+              class="avatar-small"
+            />
+            <text class="player-name">{{ selectedPayee?.nickname }}</text>
+          </view>
         </view>
 
-        <view class="form-item">
-          <text class="label">金额</text>
-          <input type="number" v-model="amount" class="input" placeholder="输入金额" />
+        <view class="amount-section">
+          <text class="amount-label">积分：</text>
+          <input type="text" v-model="amount" class="amount-input" placeholder="输入积分" @input="onAmountInput" />
         </view>
 
         <view class="modal-actions">
@@ -65,6 +91,7 @@ const userStore = useUserStore()
 const roomId = ref('')
 const roomInfo = ref<any>(null)
 const players = ref<any[]>([])
+const playerOrder = ref<string[]>([])
 const showPaymentModal = ref(false)
 
 // 记账表单
@@ -76,15 +103,102 @@ const isOwner = computed(() => {
   return roomInfo.value?.owner_id === userStore.userInfo?.id
 })
 
+const isRoomOwnerPlayer = (player: any) => {
+  return !!player?.user_id && !!roomInfo.value?.owner_id && player.user_id === roomInfo.value.owner_id
+}
+
 // 计算可选的收款人列表（排除付款人自己）
+const normalizeId = (val: any) => String(val || '')
+
+const getMyPlayerId = (list: any[]) => {
+  const myUserId = normalizeId(userStore.userInfo?.id)
+  const me = list.find(p => normalizeId(p.user_id) === myUserId)
+  return me ? normalizeId(me.id) : ''
+}
+
+const initOrderIfNeeded = (list: any[]) => {
+  if (playerOrder.value.length > 0) return
+  const myPlayerId = getMyPlayerId(list)
+  const others = [...list]
+    .filter(p => normalizeId(p.id) && normalizeId(p.id) !== myPlayerId)
+    .sort((a, b) => {
+      const timeA = new Date(a.joined_at || 0).getTime()
+      const timeB = new Date(b.joined_at || 0).getTime()
+      if (timeA !== timeB) return timeA - timeB
+      return normalizeId(a.id).localeCompare(normalizeId(b.id))
+    })
+    .map(p => normalizeId(p.id))
+
+  playerOrder.value = myPlayerId ? [myPlayerId, ...others] : others
+}
+
+const updateOrder = (list: any[]) => {
+  initOrderIfNeeded(list)
+
+  const existing = new Set(playerOrder.value)
+  const newPlayers = list
+    .filter(p => {
+      const id = normalizeId(p.id)
+      return id && !existing.has(id)
+    })
+    .sort((a, b) => {
+      const timeA = new Date(a.joined_at || 0).getTime()
+      const timeB = new Date(b.joined_at || 0).getTime()
+      if (timeA !== timeB) return timeA - timeB
+      return normalizeId(a.id).localeCompare(normalizeId(b.id))
+    })
+
+  if (newPlayers.length > 0) {
+    playerOrder.value = [...playerOrder.value, ...newPlayers.map(p => normalizeId(p.id))]
+  }
+
+  const myPlayerId = getMyPlayerId(list)
+  if (myPlayerId) {
+    const idx = playerOrder.value.indexOf(myPlayerId)
+    if (idx > 0) {
+      const next = [...playerOrder.value]
+      next.splice(idx, 1)
+      next.unshift(myPlayerId)
+      playerOrder.value = next
+    } else if (idx === -1) {
+      playerOrder.value = [myPlayerId, ...playerOrder.value]
+    }
+  }
+}
+
+const setPlayers = (list: any[]) => {
+  players.value = list || []
+  updateOrder(players.value)
+}
+
+const orderedPlayers = computed(() => {
+  if (!players.value || players.value.length === 0) return []
+
+  const map = new Map(players.value.map(p => [normalizeId(p.id), p]))
+  const ordered: any[] = []
+
+  for (const id of playerOrder.value) {
+    const p = map.get(id)
+    if (p) ordered.push(p)
+  }
+
+  for (const p of players.value) {
+    const id = normalizeId(p.id)
+    if (!playerOrder.value.includes(id)) ordered.push(p)
+  }
+
+  return ordered
+})
+
 const getPayeeOptions = computed(() => {
   if (!selectedPayer.value) return []
-  return players.value.filter(p => p.id !== selectedPayer.value.id)
+  return orderedPlayers.value.filter(p => p.id !== selectedPayer.value.id)
 })
 
 onLoad(async (options: any) => {
   if (options.id) {
     roomId.value = options.id
+    userStore.setLastRoomId(roomId.value)
     await fetchRoomInfo()
     initSocket()
   }
@@ -108,15 +222,19 @@ const initSocket = () => {
   socketService.joinRoom(roomId.value, userStore.userInfo.id)
   
   socketService.on('players-updated', (updatedPlayers: any[]) => {
-    players.value = updatedPlayers
+    setPlayers(updatedPlayers)
   })
 
   socketService.on('transaction-updated', (data: any) => {
-    players.value = data.players
+    setPlayers(data.players)
     uni.showToast({
       title: '新交易已记录',
       icon: 'success'
     })
+  })
+
+  socketService.on('room-updated', (updatedRoom: any) => {
+    roomInfo.value = { ...(roomInfo.value || {}), ...(updatedRoom || {}) }
   })
 }
 
@@ -125,7 +243,7 @@ const fetchRoomInfo = async () => {
     const res: any = await request({ url: `/room/${roomId.value}` })
     if (res.success) {
       roomInfo.value = res.data
-      players.value = res.data.players
+      setPlayers(res.data.players)
     }
   } catch (error) {
     console.error(error)
@@ -160,14 +278,37 @@ const closePaymentModal = () => {
   amount.value = ''
 }
 
+const onAmountInput = (e: any) => {
+  const raw = String(e?.detail?.value ?? '')
+  const normalized = raw.replace(/[－−–—﹣⁻]/g, '-')
+  const filtered = normalized.replace(/[^\d-]/g, '')
+  const isNegative = filtered.startsWith('-')
+  const digits = filtered.replace(/-/g, '')
+  amount.value = (isNegative ? '-' : '') + digits
+}
+
 const onPayeeChange = (e: any) => {
   // 注意：这里需要从 getPayeeOptions 中取值
   selectedPayee.value = getPayeeOptions.value[e.detail.value]
 }
 
 const confirmPayment = async () => {
-  if (!selectedPayer.value || !selectedPayee.value || !amount.value) {
+  if (!selectedPayer.value || !selectedPayee.value || !amount.value || amount.value === '-') {
     uni.showToast({ title: '请填写完整', icon: 'none' })
+    return
+  }
+
+  const numAmount = Number(amount.value)
+  if (!Number.isFinite(numAmount)) {
+    uni.showToast({ title: '请输入正确金额', icon: 'none' })
+    return
+  }
+  if (numAmount < 0) {
+    uni.showToast({ title: '金额不能为负数', icon: 'none' })
+    return
+  }
+  if (numAmount === 0) {
+    uni.showToast({ title: '金额必须大于0', icon: 'none' })
     return
   }
 
@@ -179,17 +320,23 @@ const confirmPayment = async () => {
         roomId: roomId.value,
         fromPlayerId: selectedPayer.value.id,
         toPlayerId: selectedPayee.value.id,
-        amount: Number(amount.value),
+        amount: numAmount,
         description: '游戏记账'
       }
     })
 
     if (res.success) {
-      // 通过 Socket 发送更新通知
+      // 1. 立即更新本地视图（确保操作者立刻看到变化）
+      if (res.data.players) {
+        setPlayers(res.data.players)
+      }
+
+      // 2. 通过 Socket 发送更新通知（通知其他人）
       socketService.socket?.emit('new-transaction', {
         roomId: roomId.value,
         transaction: res.data.transaction
       })
+      
       closePaymentModal()
     }
   } catch (error) {
@@ -227,7 +374,7 @@ const endGame = () => {
     content: '确定要结束本局游戏并结算吗？',
     success: (res) => {
       if (res.confirm) {
-        uni.navigateTo({
+        uni.reLaunch({
           url: `/pages/settlement/settlement?roomId=${roomId.value}`
         })
       }
@@ -277,6 +424,48 @@ const endGame = () => {
   align-items: center;
   position: relative;
   backdrop-filter: blur(10px);
+  box-sizing: border-box;
+  height: 300rpx;
+}
+
+.invite-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 2rpx dashed rgba(255, 255, 255, 0.25);
+  justify-content: center;
+  line-height: normal;
+  box-sizing: border-box;
+  width: 100%;
+  height: 300rpx;
+  padding: 30rpx;
+}
+
+.invite-card::after {
+  border: none;
+}
+
+.invite-plus {
+  font-size: 64rpx;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1;
+  margin-bottom: 10rpx;
+}
+
+.invite-text {
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.8);
+  text-align: center;
+}
+
+.owner-badge {
+  position: absolute;
+  top: 18rpx;
+  left: 18rpx;
+  font-size: 22rpx;
+  font-weight: 700;
+  padding: 6rpx 12rpx;
+  border-radius: 999rpx;
+  color: #1a1a2e;
+  background: #00d4ff;
 }
 
 .avatar {
@@ -290,6 +479,12 @@ const endGame = () => {
 .nickname {
   font-size: 28rpx;
   margin-bottom: 10rpx;
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
 }
 
 .nickname.is-me {
@@ -301,6 +496,27 @@ const endGame = () => {
   font-size: 40rpx;
   font-weight: bold;
   color: #fff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.balance-label {
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.balance-value {
+  display: inline-block;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .balance.positive {
@@ -436,5 +652,107 @@ const endGame = () => {
 .confirm {
   background: #7b68ee;
   color: #fff;
+}
+
+/* 新版记账弹窗样式 */
+.payee-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 40rpx;
+}
+
+.avatar-large {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 50%;
+  border: 4rpx solid #7b68ee;
+  margin-bottom: 16rpx;
+}
+
+.payee-score {
+  font-size: 36rpx;
+  font-weight: bold;
+  color: #fff;
+}
+
+.transfer-flow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 40rpx;
+  padding: 0 20rpx;
+}
+
+.player-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 120rpx;
+}
+
+.avatar-small {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 50%;
+  margin-bottom: 10rpx;
+  border: 2rpx solid #666;
+}
+
+.player-name {
+  font-size: 24rpx;
+  color: #ccc;
+  width: 100%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-arrow {
+  flex: 1;
+  height: 2rpx;
+  background: linear-gradient(to right, rgba(123, 104, 238, 0.2), #7b68ee);
+  margin: 0 30rpx;
+  position: relative;
+  margin-bottom: 30rpx; /* 稍微上移以对齐头像中心 */
+}
+
+.arrow-head {
+  position: absolute;
+  right: -2rpx;
+  top: -10rpx;
+  width: 0;
+  height: 0;
+  border-top: 12rpx solid transparent;
+  border-bottom: 12rpx solid transparent;
+  border-left: 16rpx solid #7b68ee;
+}
+
+.amount-section {
+  margin-bottom: 40rpx;
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  width: 100%;
+  padding: 0 20rpx;
+  box-sizing: border-box;
+}
+
+.amount-label {
+  font-size: 28rpx;
+  color: #a0a0a0;
+  flex: 0 0 auto;
+}
+
+.amount-input {
+  background: rgba(255, 255, 255, 0.1);
+  height: 80rpx;
+  border-radius: 10rpx;
+  padding: 0 20rpx;
+  line-height: 80rpx;
+  color: #fff;
+  flex: 1;
+  box-sizing: border-box;
 }
 </style>

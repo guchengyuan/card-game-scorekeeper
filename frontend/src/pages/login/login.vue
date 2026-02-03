@@ -1,7 +1,7 @@
 <template>
   <view class="container">
     <view class="logo-area">
-      <text class="title">打牌记账</text>
+      <text class="title">牌间小记</text>
       <text class="subtitle">让记账更简单</text>
     </view>
     

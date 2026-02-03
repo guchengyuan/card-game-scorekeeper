@@ -1,10 +1,54 @@
 import { Request, Response } from 'express';
 import { supabase } from '../config/db';
 
+const INT32_MAX = 2147483647;
+const INT32_MIN = -2147483648;
+
+const toNumber = (val: any) => Number(val);
+
+const isSafeInt32 = (n: number) => Number.isInteger(n) && n >= INT32_MIN && n <= INT32_MAX;
+
+const toChineseDbErrorMessage = (err: any) => {
+  const msg = String(err?.message || '');
+  const code = String(err?.code || '');
+
+  if (code === '22003' || msg.includes('out of range for type integer')) {
+    return '金额过大，请输入更小的数字';
+  }
+
+  if (code === '23514' || msg.includes('violates check constraint')) {
+    return '金额不合法，请重新输入';
+  }
+
+  return '记账失败，请稍后再试';
+};
+
 export const createTransaction = async (req: Request, res: Response) => {
   const { roomId, fromPlayerId, toPlayerId, amount, description } = req.body;
+  const numAmount = Number(amount);
 
   try {
+    if (!roomId || !fromPlayerId || !toPlayerId) {
+      res.status(400).json({ success: false, message: '参数不完整' });
+      return;
+    }
+    if (fromPlayerId === toPlayerId) {
+      res.status(400).json({ success: false, message: '付款人和收款人不能相同' });
+      return;
+    }
+    if (!Number.isFinite(numAmount) || !Number.isInteger(numAmount)) {
+      res.status(400).json({ success: false, message: '请输入正确金额' });
+      return;
+    }
+    if (numAmount <= 0) {
+      res.status(400).json({ success: false, message: '金额必须大于0' });
+      return;
+    }
+    if (numAmount > INT32_MAX) {
+      res.status(400).json({ success: false, message: '金额过大，请输入更小的数字' });
+      return;
+    }
+
     // 1. 记录交易
     const { data: transaction, error: transError } = await supabase
       .from('transactions')
@@ -12,7 +56,7 @@ export const createTransaction = async (req: Request, res: Response) => {
         room_id: roomId, 
         from_player_id: fromPlayerId, 
         to_player_id: toPlayerId, 
-        amount, 
+        amount: numAmount, 
         description 
       })
       .select()
@@ -26,8 +70,33 @@ export const createTransaction = async (req: Request, res: Response) => {
     const { data: toPlayer } = await supabase.from('players').select('balance').eq('id', toPlayerId).single();
 
     if (fromPlayer && toPlayer) {
-      await supabase.from('players').update({ balance: fromPlayer.balance - amount }).eq('id', fromPlayerId);
-      await supabase.from('players').update({ balance: toPlayer.balance + amount }).eq('id', toPlayerId);
+      const fromBalance = toNumber(fromPlayer.balance);
+      const toBalance = toNumber(toPlayer.balance);
+
+      if (!Number.isFinite(fromBalance) || !Number.isFinite(toBalance)) {
+        res.status(500).json({ success: false, message: '服务器数据异常，请稍后重试' });
+        return;
+      }
+
+      const nextFrom = fromBalance - numAmount;
+      const nextTo = toBalance + numAmount;
+
+      if (!isSafeInt32(nextFrom) || !isSafeInt32(nextTo)) {
+        res.status(400).json({ success: false, message: '积分变化后超出范围，请输入更小的金额' });
+        return;
+      }
+
+      const { error: fromUpdateError } = await supabase
+        .from('players')
+        .update({ balance: nextFrom })
+        .eq('id', fromPlayerId);
+      if (fromUpdateError) throw fromUpdateError;
+
+      const { error: toUpdateError } = await supabase
+        .from('players')
+        .update({ balance: nextTo })
+        .eq('id', toPlayerId);
+      if (toUpdateError) throw toUpdateError;
     }
 
     // 3. 获取更新后的玩家列表（用于前端同步）
@@ -45,7 +114,9 @@ export const createTransaction = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ success: false, message: err.message || 'Transaction failed' });
+    const message = toChineseDbErrorMessage(err);
+    const statusCode = message === '记账失败，请稍后再试' ? 500 : 400;
+    res.status(statusCode).json({ success: false, message });
   }
 };
 
@@ -83,7 +154,7 @@ export const getTransactions = async (req: Request, res: Response) => {
     res.json({ success: true, data: formatted });
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ success: false, message: 'Get transactions failed' });
+    res.status(500).json({ success: false, message: '获取记录失败' });
   }
 };
 
@@ -134,6 +205,6 @@ export const getSettlement = async (req: Request, res: Response) => {
     res.json({ success: true, data: settlements });
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ success: false, message: 'Settlement calculation failed' });
+    res.status(500).json({ success: false, message: '结算计算失败' });
   }
 };
