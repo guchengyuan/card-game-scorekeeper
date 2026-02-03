@@ -1,13 +1,37 @@
 import { io, Socket } from 'socket.io-client';
 
-const URL = 'http://192.168.154.16:3000';
+const getServerHost = () => {
+  const override = uni.getStorageSync('server_host')
+  if (override) return String(override)
+
+  try {
+    const info = uni.getSystemInfoSync()
+    if (info?.platform === 'devtools' || info?.model === 'devtools') return '127.0.0.1'
+  } catch {}
+
+  // @ts-ignore
+  return process.env.VITE_SERVER_IP || '127.0.0.1'
+}
 
 class SocketService {
   public socket: Socket | null = null;
+  private currentUrl: string | null = null
 
   connect() {
-    this.socket = io(URL, {
-      transports: ['websocket'],
+    const url = `http://${getServerHost()}:3000`
+    if (this.socket && this.currentUrl && this.currentUrl !== url) {
+      this.socket.disconnect()
+      this.socket = null
+    }
+
+    if (this.socket?.connected) return;
+    if (this.socket && !this.socket.connected) {
+      this.socket.connect();
+      return;
+    }
+    this.currentUrl = url
+    this.socket = io(url, {
+      transports: ['websocket', 'polling'],
       autoConnect: true
     });
 
@@ -17,6 +41,10 @@ class SocketService {
 
     this.socket.on('disconnect', () => {
       console.log('Socket disconnected');
+    });
+
+    this.socket.on('connect_error', (err) => {
+      console.log('Socket connect error:', (err as any)?.message || err);
     });
   }
 

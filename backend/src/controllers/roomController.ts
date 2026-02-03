@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { supabase } from '../config/db';
+import type { Server as SocketIOServer } from 'socket.io';
 
 // 生成 6 位数字房间号
 const generateRoomCode = () => {
@@ -88,7 +89,8 @@ export const joinRoom = async (req: Request, res: Response) => {
     const { data: players, error: playersError } = await supabase
       .from('players')
       .select('*')
-      .eq('room_id', room.id);
+      .eq('room_id', room.id)
+      .order('joined_at', { ascending: true });
 
     if (playersError) throw playersError;
 
@@ -123,6 +125,19 @@ export const joinRoom = async (req: Request, res: Response) => {
 
     if (joinError) throw joinError;
 
+    const io = (req.app.get('io') as SocketIOServer | undefined) ?? undefined;
+    if (io) {
+      const { data: latestPlayers } = await supabase
+        .from('players')
+        .select('*')
+        .eq('room_id', room.id)
+        .order('joined_at', { ascending: true });
+
+      if (latestPlayers) {
+        io.to(room.id).emit('players-updated', latestPlayers);
+      }
+    }
+
     res.json({ success: true, data: room });
   } catch (err: any) {
     console.error(err);
@@ -152,6 +167,19 @@ export const addMockPlayers = async (req: Request, res: Response) => {
       // 注意：这里没有 user_id，因为是假数据
     });
 
+    const io = (req.app.get('io') as SocketIOServer | undefined) ?? undefined;
+    if (io) {
+      const { data: latestPlayers } = await supabase
+        .from('players')
+        .select('*')
+        .eq('room_id', roomId)
+        .order('joined_at', { ascending: true });
+
+      if (latestPlayers) {
+        io.to(roomId).emit('players-updated', latestPlayers);
+      }
+    }
+
     res.json({ success: true, message: '添加假人成功' });
   } catch (err: any) {
     console.error(err);
@@ -176,7 +204,8 @@ export const getRoomInfo = async (req: Request, res: Response) => {
     const { data: players, error: playersError } = await supabase
       .from('players')
       .select('*')
-      .eq('room_id', roomId);
+      .eq('room_id', roomId)
+      .order('joined_at', { ascending: true });
 
     if (playersError) throw playersError;
     

@@ -19,6 +19,8 @@ const io = new Server(httpServer, {
   }
 });
 
+app.set('io', io);
+
 app.use(cors());
 app.use(express.json());
 
@@ -51,13 +53,31 @@ io.on('connection', (socket) => {
       const { data: players } = await supabase
         .from('players')
         .select('*')
-        .eq('room_id', roomId);
+        .eq('room_id', roomId)
+        .order('joined_at', { ascending: true });
         
       if (players) {
         io.to(roomId).emit('players-updated', players);
       }
     } catch (err) {
       console.error('Error updating player status:', err);
+    }
+  });
+
+  // 主动刷新房间数据的事件（用于假人添加等场景）
+  socket.on('refresh-room', async ({ roomId }) => {
+    try {
+      const { data: players } = await supabase
+        .from('players')
+        .select('*')
+        .eq('room_id', roomId)
+        .order('joined_at', { ascending: true });
+        
+      if (players) {
+        io.to(roomId).emit('players-updated', players);
+      }
+    } catch (err) {
+      console.error('Error refreshing room:', err);
     }
   });
 
@@ -68,7 +88,8 @@ io.on('connection', (socket) => {
       const { data: players } = await supabase
         .from('players')
         .select('*')
-        .eq('room_id', roomId);
+        .eq('room_id', roomId)
+        .order('joined_at', { ascending: true });
         
       if (players) {
         io.to(roomId).emit('transaction-updated', {
@@ -95,7 +116,8 @@ io.on('connection', (socket) => {
       const { data: players } = await supabase
         .from('players')
         .select('*')
-        .eq('room_id', roomId);
+        .eq('room_id', roomId)
+        .order('joined_at', { ascending: true });
         
       if (players) {
         io.to(roomId).emit('players-updated', players);
@@ -153,7 +175,8 @@ io.on('connection', (socket) => {
       const { data: players } = await supabase
         .from('players')
         .select('*')
-        .eq('room_id', roomId);
+        .eq('room_id', roomId)
+        .order('joined_at', { ascending: true });
 
       if (players) {
         io.to(roomId).emit('players-updated', players);

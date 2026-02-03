@@ -49,20 +49,40 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { onLoad, onPullDownRefresh } from '@dcloudio/uni-app';
+import { onLoad, onPullDownRefresh, onShow, onUnload } from '@dcloudio/uni-app';
 import { request } from '../../utils/request';
+import { socketService } from '../../utils/socket';
 import { useUserStore } from '../../stores/user';
 
 const userStore = useUserStore();
 const transactions = ref<any[]>([]);
 const roomId = ref('');
 
-onLoad((options) => {
-  if (options && options.roomId) {
-    roomId.value = options.roomId;
+const normalizeRoomId = (val: any) => String(val || '').trim()
+
+onLoad((options: any) => {
+  const optRoomId = normalizeRoomId(options?.roomId || options?.roomid || options?.id)
+  roomId.value = optRoomId || normalizeRoomId(userStore.lastRoomId)
+  if (roomId.value) {
+    userStore.setLastRoomId(roomId.value)
+    fetchTransactions()
+  } else {
+    uni.showToast({ title: '缺少房间信息，请从房间页进入', icon: 'none' })
+  }
+  
+  // 监听新交易
+  socketService.on('transaction-updated', (data: any) => {
     fetchTransactions();
-  } else if (userStore.lastRoomId) {
-    roomId.value = userStore.lastRoomId;
+  });
+});
+
+onUnload(() => {
+  // 页面卸载时取消监听，避免内存泄漏或重复监听
+  socketService.off('transaction-updated');
+});
+
+onShow(() => {
+  if (roomId.value) {
     fetchTransactions();
   }
 });
@@ -81,7 +101,7 @@ const fetchTransactions = async () => {
     });
     
     if (res.success) {
-      transactions.value = res.data;
+      transactions.value = Array.isArray(res.data) ? res.data : [];
     }
   } catch (error) {
     console.error('获取交易记录失败:', error);

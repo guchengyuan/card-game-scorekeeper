@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { onLoad, onUnload, onShareAppMessage } from '@dcloudio/uni-app'
+import { onLoad, onUnload, onShow, onHide, onShareAppMessage } from '@dcloudio/uni-app'
 import { ref, computed } from 'vue'
 import { useUserStore } from '../../stores/user'
 import { request } from '../../utils/request'
@@ -91,8 +91,8 @@ const userStore = useUserStore()
 const roomId = ref('')
 const roomInfo = ref<any>(null)
 const players = ref<any[]>([])
-const playerOrder = ref<string[]>([])
 const showPaymentModal = ref(false)
+let syncTimer: any = null
 
 // 记账表单
 const selectedPayer = ref<any>(null)
@@ -110,84 +110,13 @@ const isRoomOwnerPlayer = (player: any) => {
 // 计算可选的收款人列表（排除付款人自己）
 const normalizeId = (val: any) => String(val || '')
 
-const getMyPlayerId = (list: any[]) => {
-  const myUserId = normalizeId(userStore.userInfo?.id)
-  const me = list.find(p => normalizeId(p.user_id) === myUserId)
-  return me ? normalizeId(me.id) : ''
-}
-
-const initOrderIfNeeded = (list: any[]) => {
-  if (playerOrder.value.length > 0) return
-  const myPlayerId = getMyPlayerId(list)
-  const others = [...list]
-    .filter(p => normalizeId(p.id) && normalizeId(p.id) !== myPlayerId)
-    .sort((a, b) => {
-      const timeA = new Date(a.joined_at || 0).getTime()
-      const timeB = new Date(b.joined_at || 0).getTime()
-      if (timeA !== timeB) return timeA - timeB
-      return normalizeId(a.id).localeCompare(normalizeId(b.id))
-    })
-    .map(p => normalizeId(p.id))
-
-  playerOrder.value = myPlayerId ? [myPlayerId, ...others] : others
-}
-
-const updateOrder = (list: any[]) => {
-  initOrderIfNeeded(list)
-
-  const existing = new Set(playerOrder.value)
-  const newPlayers = list
-    .filter(p => {
-      const id = normalizeId(p.id)
-      return id && !existing.has(id)
-    })
-    .sort((a, b) => {
-      const timeA = new Date(a.joined_at || 0).getTime()
-      const timeB = new Date(b.joined_at || 0).getTime()
-      if (timeA !== timeB) return timeA - timeB
-      return normalizeId(a.id).localeCompare(normalizeId(b.id))
-    })
-
-  if (newPlayers.length > 0) {
-    playerOrder.value = [...playerOrder.value, ...newPlayers.map(p => normalizeId(p.id))]
-  }
-
-  const myPlayerId = getMyPlayerId(list)
-  if (myPlayerId) {
-    const idx = playerOrder.value.indexOf(myPlayerId)
-    if (idx > 0) {
-      const next = [...playerOrder.value]
-      next.splice(idx, 1)
-      next.unshift(myPlayerId)
-      playerOrder.value = next
-    } else if (idx === -1) {
-      playerOrder.value = [myPlayerId, ...playerOrder.value]
-    }
-  }
-}
-
 const setPlayers = (list: any[]) => {
   players.value = list || []
-  updateOrder(players.value)
 }
 
+// 直接使用 players，不再进行客户端重排序，保证所有端看到的一致
 const orderedPlayers = computed(() => {
-  if (!players.value || players.value.length === 0) return []
-
-  const map = new Map(players.value.map(p => [normalizeId(p.id), p]))
-  const ordered: any[] = []
-
-  for (const id of playerOrder.value) {
-    const p = map.get(id)
-    if (p) ordered.push(p)
-  }
-
-  for (const p of players.value) {
-    const id = normalizeId(p.id)
-    if (!playerOrder.value.includes(id)) ordered.push(p)
-  }
-
-  return ordered
+  return players.value || []
 })
 
 const getPayeeOptions = computed(() => {
@@ -214,12 +143,51 @@ onShareAppMessage(() => {
 })
 
 onUnload(() => {
+  if (syncTimer) {
+    clearInterval(syncTimer)
+    syncTimer = null
+  }
   socketService.leaveRoom(roomId.value, userStore.userInfo.id)
 })
+
+onShow(() => {
+  if (roomId.value) {
+    fetchRoomInfo()
+  }
+  startSync()
+})
+
+onHide(() => {
+  stopSync()
+})
+
+const startSync = () => {
+  if (syncTimer) return
+  syncTimer = setInterval(() => {
+    const connected = !!socketService.socket?.connected
+    if (!connected && roomId.value) {
+      fetchRoomInfo()
+    }
+  }, 3000)
+}
+
+const stopSync = () => {
+  if (syncTimer) {
+    clearInterval(syncTimer)
+    syncTimer = null
+  }
+}
 
 const initSocket = () => {
   socketService.connect()
   socketService.joinRoom(roomId.value, userStore.userInfo.id)
+
+  socketService.socket?.on('connect', () => {
+    stopSync()
+  })
+  socketService.socket?.on('disconnect', () => {
+    startSync()
+  })
   
   socketService.on('players-updated', (updatedPlayers: any[]) => {
     setPlayers(updatedPlayers)
@@ -354,7 +322,7 @@ const addMockPlayers = async () => {
     
     if (res.success) {
       uni.showToast({ title: '添加成功', icon: 'success' })
-      // 刷新房间信息
+      // 1. 刷新自己的视图
       fetchRoomInfo()
     }
   } catch (error) {

@@ -1,4 +1,17 @@
-const BASE_URL = 'http://192.168.154.16:3000/api';
+const getServerHost = () => {
+  const override = uni.getStorageSync('server_host')
+  if (override) return String(override)
+
+  try {
+    const info = uni.getSystemInfoSync()
+    if (info?.platform === 'devtools' || info?.model === 'devtools') return '127.0.0.1'
+  } catch {}
+
+  // @ts-ignore
+  return process.env.VITE_SERVER_IP || '127.0.0.1'
+}
+
+const BASE_URL = `http://${getServerHost()}:3000/api`;
 
 export const request = (options: UniApp.RequestOptions) => {
   return new Promise((resolve, reject) => {
