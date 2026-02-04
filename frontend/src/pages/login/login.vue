@@ -47,6 +47,17 @@ const nickName = ref('');
 
 // #ifdef MP-WEIXIN
 onLoad(() => {
+  const pendingRoomCode = String(uni.getStorageSync('pending_room_code') || '').trim()
+  if (userStore.userInfo?.id) {
+    if (pendingRoomCode) {
+      uni.removeStorageSync('pending_room_code')
+      uni.reLaunch({ url: `/pages/room/room?roomCode=${pendingRoomCode}` })
+      return
+    }
+    uni.reLaunch({ url: '/pages/home/home' })
+    return
+  }
+
   // 尝试从缓存恢复头像和昵称
   const cachedInfo = uni.getStorageSync('wechat_user_info');
   if (cachedInfo) {
@@ -64,7 +75,54 @@ const onNicknameBlur = (e: any) => {
   nickName.value = e.detail.value;
 };
 
-const handleWechatLogin = () => {
+const normalizeAvatarUrl = async (input: string) => {
+  const trimmed = String(input || '').trim()
+  if (!trimmed) return defaultAvatar
+  if (trimmed === defaultAvatar) return defaultAvatar
+  if (trimmed.startsWith('data:image')) return trimmed
+  if (trimmed.startsWith('https://')) return trimmed
+
+  let filePath = trimmed
+  if (trimmed.startsWith('http://tmp') || trimmed.startsWith('https://tmp')) {
+    const downloadRes = await new Promise<UniApp.DownloadSuccessCallbackResult>((resolve, reject) => {
+      uni.downloadFile({
+        url: trimmed,
+        success: resolve,
+        fail: reject
+      })
+    })
+    if (downloadRes.statusCode >= 200 && downloadRes.statusCode < 300 && downloadRes.tempFilePath) {
+      filePath = downloadRes.tempFilePath
+    } else {
+      return defaultAvatar
+    }
+  }
+
+  if (!filePath.startsWith('wxfile://') && !filePath.startsWith('http://tmp') && !filePath.startsWith('https://tmp') && !filePath.startsWith('/')) {
+    return defaultAvatar
+  }
+
+  try {
+    const fs = uni.getFileSystemManager()
+    const base64 = await new Promise<string>((resolve, reject) => {
+      fs.readFile({
+        filePath,
+        encoding: 'base64',
+        success: (res: any) => resolve(String(res.data || '')),
+        fail: reject
+      })
+    })
+    if (!base64) return defaultAvatar
+
+    const lower = filePath.toLowerCase()
+    const mime = lower.endsWith('.png') ? 'image/png' : 'image/jpeg'
+    return `data:${mime};base64,${base64}`
+  } catch {
+    return defaultAvatar
+  }
+}
+
+const handleWechatLogin = async () => {
   if (!nickName.value) {
     uni.showToast({ title: '请输入昵称', icon: 'none' });
     return;
@@ -72,38 +130,7 @@ const handleWechatLogin = () => {
 
   uni.showLoading({ title: '登录中...' });
 
-  // 优化头像处理逻辑
-  let finalAvatar = avatarUrl.value;
-  
-  // 1. 如果是默认头像，直接使用
-  if (finalAvatar === defaultAvatar) {
-    // do nothing
-  }
-  // 2. 如果是 http 网络图片（可能是之前缓存的），直接使用
-  else if (finalAvatar.startsWith('http')) {
-    // do nothing
-  }
-  // 3. 如果是 base64，直接使用
-  else if (finalAvatar.startsWith('data:image')) {
-    // do nothing
-  }
-  // 4. 如果是临时文件路径（wxfile:// 或 http://tmp/），尝试读取
-  else {
-    try {
-      const fs = uni.getFileSystemManager();
-      // 读取文件并转为 Base64
-      const base64 = fs.readFileSync(finalAvatar, 'base64');
-      finalAvatar = `data:image/jpeg;base64,${base64}`;
-    } catch (e) {
-      console.error('Avatar read failed, using temporary path or fallback', e);
-      // 如果读取失败（例如文件太大或权限问题），降级处理：
-      // 在开发工具中，有时直接传临时路径后端无法访问，但在真机上临时路径也只有本地能看。
-      // 这里的最佳实践是上传到服务器，但为了简化，如果转 Base64 失败，
-      // 我们暂且使用原路径（虽然可能导致其他用户看不到头像），或者回退到默认头像。
-      // finalAvatar = defaultAvatar; // 选项 A：回退默认
-      // 选项 B：尽力而为，保留原路径（本地能看）
-    }
-  }
+  const finalAvatar = await normalizeAvatarUrl(avatarUrl.value)
 
   uni.login({
     provider: 'weixin',
@@ -120,6 +147,14 @@ const handleWechatLogin = () => {
         userStore.login(loginRes.code, userInfo).then((success) => {
           uni.hideLoading();
           if (success) {
+            const pendingRoomCode = String(uni.getStorageSync('pending_room_code') || '').trim()
+            if (pendingRoomCode) {
+              uni.removeStorageSync('pending_room_code')
+              uni.reLaunch({
+                url: `/pages/room/room?roomCode=${pendingRoomCode}`
+              })
+              return
+            }
             uni.reLaunch({
               url: '/pages/home/home'
             });
@@ -146,6 +181,14 @@ const handleMockLogin = () => {
   userStore.login(mockCode, mockUserInfo).then((success) => {
     uni.hideLoading();
     if (success) {
+      const pendingRoomCode = String(uni.getStorageSync('pending_room_code') || '').trim()
+      if (pendingRoomCode) {
+        uni.removeStorageSync('pending_room_code')
+        uni.reLaunch({
+          url: `/pages/room/room?roomCode=${pendingRoomCode}`
+        })
+        return
+      }
       uni.reLaunch({
         url: '/pages/home/home'
       });

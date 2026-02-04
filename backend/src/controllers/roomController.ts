@@ -2,29 +2,31 @@ import { Request, Response } from 'express';
 import { supabase } from '../config/db';
 import type { Server as SocketIOServer } from 'socket.io';
 
+const normalizeAvatar = (avatar: any) => {
+  const val = String(avatar || '').trim();
+  if (!val) return null;
+  if (val.startsWith('wxfile://')) return null;
+  if (val.startsWith('http://tmp') || val.startsWith('https://tmp')) return null;
+  return val;
+};
+
 // 生成 6 位数字房间号
 const generateRoomCode = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
 export const createRoom = async (req: Request, res: Response) => {
-  const { userId, name, maxPlayers, password } = req.body;
+  const { userId, name, maxPlayers } = req.body;
 
   try {
-    const pwd = String(password || '');
-    if (!/^\d{6}$/.test(pwd)) {
-      return res.status(400).json({ success: false, message: '请输入6位数字密码' });
-    }
-
     const code = generateRoomCode();
     
-    // 创建房间
+    // 创建房间 (无密码)
     const { data: room, error: roomError } = await supabase
       .from('rooms')
       .insert({ 
         name, 
         code, 
-        password: pwd,
         owner_id: userId, 
         max_players: maxPlayers || 4 
       })
@@ -49,7 +51,7 @@ export const createRoom = async (req: Request, res: Response) => {
         user_id: userId, 
         room_id: room.id, 
         nickname: user.nickname, 
-        avatar: user.avatar 
+        avatar: normalizeAvatar(user.avatar) 
       });
 
     if (playerError) throw playerError;
@@ -62,14 +64,9 @@ export const createRoom = async (req: Request, res: Response) => {
 };
 
 export const joinRoom = async (req: Request, res: Response) => {
-  const { userId, roomCode, password } = req.body;
+  const { userId, roomCode } = req.body;
 
   try {
-    const pwd = String(password || '');
-    if (!/^\d{6}$/.test(pwd)) {
-      return res.status(400).json({ success: false, message: '请输入6位数字密码' });
-    }
-
     // 查找房间
     const { data: room, error: roomError } = await supabase
       .from('rooms')
@@ -79,10 +76,6 @@ export const joinRoom = async (req: Request, res: Response) => {
 
     if (roomError || !room) {
       return res.status(404).json({ success: false, message: '房间不存在，请检查房间号' });
-    }
-
-    if (String(room.password || '') !== pwd) {
-      return res.status(400).json({ success: false, message: '密码错误' });
     }
 
     // 检查房间是否已满
@@ -120,7 +113,7 @@ export const joinRoom = async (req: Request, res: Response) => {
         user_id: userId, 
         room_id: room.id, 
         nickname: user.nickname, 
-        avatar: user.avatar 
+        avatar: normalizeAvatar(user.avatar) 
       });
 
     if (joinError) throw joinError;
@@ -219,5 +212,68 @@ export const getRoomInfo = async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ success: false, message: '服务器错误' });
+  }
+};
+
+export const getRoomQRCode = async (req: Request, res: Response) => {
+  const { roomCode } = req.body;
+
+  try {
+    // 微信接口配置
+    const appId = process.env.WECHAT_APP_ID || '';
+    const appSecret = process.env.WECHAT_APP_SECRET || '';
+
+    if (!appId || !appSecret) {
+      return res.status(500).json({ success: false, message: '服务器未配置微信密钥' });
+    }
+
+    // 1. 获取 Access Token
+    const tokenUrl = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${appId}&secret=${appSecret}`;
+    const tokenRes = await fetch(tokenUrl);
+    const tokenData = await tokenRes.json();
+
+    if (!tokenData.access_token) {
+      console.error('WeChat Token Error:', tokenData);
+      return res.status(500).json({ success: false, message: '获取微信令牌失败' });
+    }
+
+    // 2. 生成小程序码 (getUnlimitedQRCode)
+    // 注意：scene 最大32个可见字符，只支持数字，大小写英文以及部分特殊字符
+    // page 必须是已经发布的小程序存在的页面（否则报错），例如 "pages/room/room"
+    const qrUrl = `https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=${tokenData.access_token}`;
+    const qrRes = await fetch(qrUrl, {
+      method: 'POST',
+      body: JSON.stringify({
+        scene: `${roomCode}`,
+        page: 'pages/room/room', // 扫码后跳转的页面
+        check_path: false, // 开发阶段设为 false，否则必须发布后才能生成
+        env_version: 'develop' // 开发版: develop, 体验版: trial, 正式版: release
+      })
+    });
+
+    if (!qrRes.ok) {
+      return res.status(500).json({ success: false, message: '生成二维码网络错误' });
+    }
+
+    const arrayBuffer = await qrRes.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    
+    // 检查是否返回了错误 JSON
+    try {
+      const jsonCheck = JSON.parse(buffer.toString());
+      if (jsonCheck.errcode) {
+        console.error('WeChat QRCode Error:', jsonCheck);
+        return res.status(500).json({ success: false, message: `生成失败: ${jsonCheck.errmsg}` });
+      }
+    } catch {
+      // 不是 JSON，说明是图片二进制，继续处理
+    }
+
+    const base64 = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+    res.json({ success: true, data: base64 });
+
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ success: false, message: '生成二维码失败' });
   }
 };

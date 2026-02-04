@@ -5,7 +5,15 @@
     </view>
 
     <scroll-view scroll-y class="list-container">
-      <view v-if="transactions.length === 0" class="empty-state">
+      <view v-if="loading" class="empty-state">
+        <text class="empty-text">加载中...</text>
+      </view>
+
+      <view v-else-if="errorText" class="empty-state">
+        <text class="empty-text">{{ errorText }}</text>
+      </view>
+
+      <view v-else-if="transactions.length === 0" class="empty-state">
         <text class="empty-text">暂无交易记录</text>
       </view>
       
@@ -57,6 +65,8 @@ import { useUserStore } from '../../stores/user';
 const userStore = useUserStore();
 const transactions = ref<any[]>([]);
 const roomId = ref('');
+const loading = ref(false)
+const errorText = ref('')
 
 const normalizeRoomId = (val: any) => String(val || '').trim()
 
@@ -94,6 +104,8 @@ onPullDownRefresh(() => {
 const fetchTransactions = async () => {
   if (!roomId.value) return;
   
+  loading.value = true
+  errorText.value = ''
   try {
     const res = await request({
       url: `/transaction/room/${roomId.value}`,
@@ -102,11 +114,15 @@ const fetchTransactions = async () => {
     
     if (res.success) {
       transactions.value = Array.isArray(res.data) ? res.data : [];
+    } else {
+      errorText.value = (res as any)?.message ? String((res as any).message) : '加载失败'
     }
   } catch (error) {
     console.error('获取交易记录失败:', error);
+    errorText.value = '加载失败'
     uni.showToast({ title: '加载失败', icon: 'none' });
   } finally {
+    loading.value = false
     uni.stopPullDownRefresh();
   }
 };

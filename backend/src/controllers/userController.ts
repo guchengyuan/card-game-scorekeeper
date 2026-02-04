@@ -1,6 +1,14 @@
 import { Request, Response } from 'express';
 import { supabase } from '../config/db';
 
+const normalizeAvatar = (avatarUrl: any) => {
+  const val = String(avatarUrl || '').trim();
+  if (!val) return null;
+  if (val.startsWith('wxfile://')) return null;
+  if (val.startsWith('http://tmp') || val.startsWith('https://tmp')) return null;
+  return val;
+};
+
 export const login = async (req: Request, res: Response) => {
   const { code, userInfo, openid: providedOpenid } = req.body;
 
@@ -20,17 +28,20 @@ export const login = async (req: Request, res: Response) => {
     let user;
     if (users && users.length > 0) {
       // 更新用户信息
-      user = users[0];
-      const { error: updateError } = await supabase
+      const existing = users[0];
+      const { data: updatedUser, error: updateError } = await supabase
         .from('users')
         .update({ 
           nickname: userInfo.nickName, 
-          avatar: userInfo.avatarUrl, 
+          avatar: normalizeAvatar(userInfo?.avatarUrl), 
           updated_at: new Date().toISOString() 
         })
-        .eq('id', user.id);
+        .eq('id', existing.id)
+        .select()
+        .single();
       
       if (updateError) throw updateError;
+      user = updatedUser;
     } else {
       // 创建新用户
       const { data: newUser, error: createError } = await supabase
@@ -38,7 +49,7 @@ export const login = async (req: Request, res: Response) => {
         .insert({ 
           openid, 
           nickname: userInfo.nickName, 
-          avatar: userInfo.avatarUrl 
+          avatar: normalizeAvatar(userInfo?.avatarUrl) 
         })
         .select()
         .single();

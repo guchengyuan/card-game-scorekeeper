@@ -57,6 +57,10 @@ const exitRoom = () => {
 }
 
 onLoad((options) => {
+  if (!userStore.userInfo?.id) {
+    uni.reLaunch({ url: '/pages/login/login' })
+    return
+  }
   if (options && options.roomId) {
     roomId.value = options.roomId;
     fetchSettlement();

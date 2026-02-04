@@ -1,15 +1,17 @@
 {
   "pages": [
     {
-      "path": "pages/login/login",
+      "path": "pages/home/home",
       "style": {
-        "navigationBarTitleText": "登录"
+        "navigationBarTitleText": "首页",
+        "navigationStyle": "custom"
       }
     },
     {
-      "path": "pages/home/home",
+      "path": "pages/login/login",
       "style": {
-        "navigationBarTitleText": "首页"
+        "navigationBarTitleText": "登录",
+        "navigationStyle": "custom"
       }
     },
     {
@@ -28,7 +30,8 @@
     {
       "path": "pages/settlement/settlement",
       "style": {
-        "navigationBarTitleText": "结算"
+        "navigationBarTitleText": "结算",
+        "navigationStyle": "custom"
       }
     }
   ],

@@ -11,8 +11,8 @@
       </view>
       
       <view class="card join-room" @click="handleJoinRoom">
-        <text class="card-title">加入房间</text>
-        <text class="card-desc">输入号码加入游戏</text>
+        <text class="card-title">扫码加入</text>
+        <text class="card-desc">扫描二维码加入游戏</text>
       </view>
     </view>
   </view>
@@ -28,6 +28,17 @@ const userStore = useUserStore();
 const myRoomDesc = ref('点击返回房间');
 
 onLoad((options: any) => {
+  if (!userStore.userInfo?.id) {
+    const roomCode = String(options?.roomCode || '').trim()
+    if (/^\d{6}$/.test(roomCode)) {
+      uni.setStorageSync('pending_room_code', roomCode)
+    } else if (options.action === 'join' && options.roomCode) {
+      uni.setStorageSync('pending_room_code', String(options.roomCode).trim())
+    }
+    uni.reLaunch({ url: '/pages/login/login' })
+    return
+  }
+
   // 如果是扫码进入，自动执行加入房间逻辑
   if (options.action === 'join' && options.roomCode) {
     joinRoomByCode(options.roomCode);
@@ -35,6 +46,10 @@ onLoad((options: any) => {
 });
 
 onShow(() => {
+  if (!userStore.userInfo?.id) {
+    uni.reLaunch({ url: '/pages/login/login' })
+    return
+  }
   refreshMyRoomInfo();
 });
 
@@ -63,9 +78,6 @@ const refreshMyRoomInfo = async () => {
 };
 
 const joinRoomByCode = async (roomCode: string) => {
-  const { roomPassword, canceled } = await promptPassword('请输入房间密码')
-  if (canceled) return
-
   uni.showLoading({ title: '加入中...' });
   try {
     const joinRes: any = await request({
@@ -73,8 +85,7 @@ const joinRoomByCode = async (roomCode: string) => {
       method: 'POST',
       data: {
         userId: userStore.userInfo.id,
-        roomCode: roomCode,
-        password: roomPassword
+        roomCode: roomCode
       }
     });
 
@@ -98,9 +109,6 @@ const joinRoomByCode = async (roomCode: string) => {
 };
 
 const handleCreateRoom = async () => {
-  const { roomPassword, canceled } = await promptPassword('设置6位数字密码')
-  if (canceled) return
-
   uni.showLoading({ title: '创建中...' });
   try {
     const res: any = await request({
@@ -108,15 +116,14 @@ const handleCreateRoom = async () => {
       method: 'POST',
       data: {
         userId: userStore.userInfo.id,
-        name: `${userStore.userInfo.nickname}的房间`,
-        password: roomPassword
+        name: `${userStore.userInfo.nickname}的房间`
       }
     });
 
     if (res.success) {
       userStore.setLastRoomId(res.data.id);
       uni.navigateTo({
-        url: `/pages/room/room?id=${res.data.id}`
+        url: `/pages/room/room?id=${res.data.id}&isNew=true`
       });
     }
   } catch (error) {
@@ -137,40 +144,35 @@ const handlePrimaryCardClick = () => {
 };
 
 const handleJoinRoom = () => {
-  uni.showModal({
-    title: '加入房间',
-    editable: true,
-    placeholderText: '请输入6位房间号',
-    success: async (res) => {
-      if (res.confirm && res.content) {
-        joinRoomByCode(res.content);
+  uni.scanCode({
+    success: (res) => {
+      // 假设扫码内容是房间号，或者包含房间号的链接
+      // 这里做个简单处理：如果全是数字，当做房间号；如果是链接，解析 query
+      let code = res.result;
+      
+      // 尝试从链接中解析 roomCode 参数
+      if (code.includes('?')) {
+        const match = code.match(/[?&]roomCode=(\d+)/);
+        if (match) {
+          code = match[1];
+        }
+      }
+
+      // 如果是6位数字，直接加入
+      if (/^\d{6}$/.test(code)) {
+        joinRoomByCode(code);
+      } else {
+        uni.showToast({ title: '无效的房间码', icon: 'none' });
+      }
+    },
+    fail: (err) => {
+      // 用户取消扫码不提示错误
+      if (err.errMsg !== 'scanCode:fail cancel') {
+        uni.showToast({ title: '扫码失败', icon: 'none' });
       }
     }
   });
 };
-
-const promptPassword = (title: string) => {
-  return new Promise<{ roomPassword: string; canceled: boolean }>((resolve) => {
-    uni.showModal({
-      title,
-      editable: true,
-      placeholderText: '请输入6位数字密码',
-      success: (res) => {
-        const pwd = String((res as any).content || '')
-        if (!res.confirm) {
-          resolve({ roomPassword: '', canceled: true })
-          return
-        }
-        if (!/^\d{6}$/.test(pwd)) {
-          uni.showToast({ title: '请输入6位数字密码', icon: 'none' })
-          resolve({ roomPassword: '', canceled: true })
-          return
-        }
-        resolve({ roomPassword: pwd, canceled: false })
-      }
-    })
-  })
-}
 </script>
 
 <style>

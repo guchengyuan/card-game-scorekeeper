@@ -8,7 +8,7 @@
     <view class="players-grid">
       <view v-for="player in orderedPlayers" :key="player.id" class="player-card" @click="handlePlayerClick(player)">
         <view v-if="isRoomOwnerPlayer(player)" class="owner-badge">房主</view>
-        <image :src="player.avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'" class="avatar" />
+        <image :src="player.displayAvatar || defaultAvatar" class="avatar" @error="onPlayerAvatarError(player)" />
         <text class="nickname" :class="{ 'is-me': player.user_id === userStore.userInfo?.id }">
           {{ player.user_id === userStore.userInfo?.id ? '我' : player.nickname }}
         </text>
@@ -19,10 +19,10 @@
         <view class="status-dot" :class="{ online: player.is_online }"></view>
       </view>
 
-      <button class="player-card invite-card" open-type="share">
+      <view class="player-card invite-card" @click="openInviteModal">
         <text class="invite-plus">＋</text>
         <text class="invite-text">邀请好友</text>
-      </button>
+      </view>
     </view>
 
     <view class="action-bar">
@@ -31,23 +31,37 @@
       <button class="action-btn end-btn" @click="endGame">结束</button>
     </view>
 
+    <!-- 邀请弹窗 -->
+    <view v-if="showInviteModal" class="modal-mask">
+      <view class="modal-content invite-modal-content">
+        <view class="invite-header">
+          <text class="invite-title">邀请好友</text>
+          <view class="close-btn" @click="closeInviteModal">×</view>
+        </view>
+        
+        <view class="qrcode-container">
+          <image v-if="qrCodeImage" :src="qrCodeImage" class="qrcode-image" mode="aspectFit" />
+          <view v-if="!qrCodeImage" class="loading-text">生成中...</view>
+        </view>
+
+        <button class="btn confirm share-btn" open-type="share">分享给好友</button>
+      </view>
+    </view>
+
     <!-- 记账弹窗 -->
     <view v-if="showPaymentModal" class="modal-mask">
       <view class="modal-content">
         <text class="modal-title">记一笔</text>
 
         <view class="payee-header">
-          <image
-            :src="selectedPayee?.avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'"
-            class="avatar-large"
-          />
+          <image :src="selectedPayee?.displayAvatar || defaultAvatar" class="avatar-large" />
           <text class="payee-score">积分：{{ selectedPayee?.balance > 0 ? '+' : '' }}{{ selectedPayee?.balance }}</text>
         </view>
 
         <view class="transfer-flow">
           <view class="player-node">
             <image
-              :src="selectedPayer?.avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'"
+              :src="selectedPayer?.displayAvatar || defaultAvatar"
               class="avatar-small"
             />
             <text class="player-name">{{ selectedPayer?.user_id === userStore.userInfo?.id ? '我' : selectedPayer?.nickname }}</text>
@@ -59,7 +73,7 @@
 
           <view class="player-node">
             <image
-              :src="selectedPayee?.avatar || 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'"
+              :src="selectedPayee?.displayAvatar || defaultAvatar"
               class="avatar-small"
             />
             <text class="player-name">{{ selectedPayee?.nickname }}</text>
@@ -73,7 +87,7 @@
 
         <view class="modal-actions">
           <button class="btn cancel" @click="closePaymentModal">取消</button>
-          <button class="btn confirm" @click="confirmPayment">确认</button>
+          <button class="btn confirm" :disabled="isPaying" @click="confirmPayment">确认</button>
         </view>
       </view>
     </view>
@@ -88,16 +102,20 @@ import { request } from '../../utils/request'
 import { socketService } from '../../utils/socket'
 
 const userStore = useUserStore()
+const defaultAvatar = 'https://mmbiz.qpic.cn/mmbiz/icTdbqWNOwNRna42FI242Lcia07jQodd2FJGIYQfG0LAJGFxM4FbnQP6yfMxBgJ0F3YRqJCJ1aPAK2dQagdusBZg/0'
 const roomId = ref('')
 const roomInfo = ref<any>(null)
 const players = ref<any[]>([])
 const showPaymentModal = ref(false)
+const showInviteModal = ref(false)
+const qrCodeImage = ref('')
 let syncTimer: any = null
 
 // 记账表单
 const selectedPayer = ref<any>(null)
 const selectedPayee = ref<any>(null)
 const amount = ref('')
+const isPaying = ref(false)
 
 const isOwner = computed(() => {
   return roomInfo.value?.owner_id === userStore.userInfo?.id
@@ -110,8 +128,77 @@ const isRoomOwnerPlayer = (player: any) => {
 // 计算可选的收款人列表（排除付款人自己）
 const normalizeId = (val: any) => String(val || '')
 
-const setPlayers = (list: any[]) => {
-  players.value = list || []
+const avatarCache = new Map<string, string>()
+
+const hashString = (input: string) => {
+  let hash = 0
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash).toString(16)
+}
+
+const getUserDataPath = () => {
+  const uniEnv = (uni as any)?.env
+  if (uniEnv?.USER_DATA_PATH) return String(uniEnv.USER_DATA_PATH)
+  const wxAny = (globalThis as any)?.wx
+  if (wxAny?.env?.USER_DATA_PATH) return String(wxAny.env.USER_DATA_PATH)
+  return ''
+}
+
+const materializeDataImage = async (dataUrl: string) => {
+  const cached = avatarCache.get(dataUrl)
+  if (cached) return cached
+
+  const match = /^data:(image\/png|image\/jpeg);base64,(.+)$/.exec(dataUrl)
+  if (!match) return ''
+  const mime = match[1]
+  const base64 = match[2]
+  const ext = mime === 'image/png' ? 'png' : 'jpg'
+
+  const basePath = getUserDataPath()
+  if (!basePath) return ''
+  const filePath = `${basePath}/avatar_${hashString(base64.slice(0, 256) + String(base64.length))}.${ext}`
+
+  try {
+    const fs = uni.getFileSystemManager()
+    await new Promise<void>((resolve, reject) => {
+      fs.writeFile({
+        filePath,
+        data: base64,
+        encoding: 'base64',
+        success: () => resolve(),
+        fail: reject
+      })
+    })
+    avatarCache.set(dataUrl, filePath)
+    return filePath
+  } catch {
+    return ''
+  }
+}
+
+const normalizeAvatarForDisplay = async (avatar: any) => {
+  const val = String(avatar || '')
+  if (!val) return ''
+  if (val.startsWith('data:image')) {
+    const filePath = await materializeDataImage(val)
+    return filePath || ''
+  }
+  if (val.startsWith('wxfile://')) return ''
+  if (val.startsWith('http://tmp') || val.startsWith('https://tmp')) return ''
+  return val
+}
+
+const setPlayersAsync = async (list: any[]) => {
+  const arr = Array.isArray(list) ? list : []
+  const next = await Promise.all(
+    arr.map(async (p: any) => {
+      const displayAvatar = await normalizeAvatarForDisplay(p?.avatar)
+      return { ...(p || {}), displayAvatar }
+    })
+  )
+  players.value = next
 }
 
 // 直接使用 players，不再进行客户端重排序，保证所有端看到的一致
@@ -124,20 +211,105 @@ const getPayeeOptions = computed(() => {
   return orderedPlayers.value.filter(p => p.id !== selectedPayer.value.id)
 })
 
+const decodeScene = (input: any) => {
+  let str = String(input || '')
+  for (let i = 0; i < 2; i++) {
+    if (/%[0-9A-Fa-f]{2}/.test(str)) {
+      try {
+        str = decodeURIComponent(str)
+      } catch {
+        break
+      }
+    }
+  }
+  return str
+}
+
+const extractRoomCode = (options: any) => {
+  const direct = String(options?.roomCode || '').trim()
+  if (/^\d{6}$/.test(direct)) return direct
+
+  const sceneRaw = options?.scene
+  if (!sceneRaw) return ''
+  const scene = decodeScene(sceneRaw).trim()
+  if (/^\d{6}$/.test(scene)) return scene
+
+  const match = scene.match(/(?:^|[?&])roomCode=(\d{6})(?:$|&)/)
+  if (match) return match[1]
+
+  const match2 = scene.match(/(?:^|&)roomCode=(\d{6})(?:$|&)/)
+  if (match2) return match2[1]
+
+  return ''
+}
+
+const joinRoomByCodeAndEnter = async (code: string) => {
+  const roomCode = String(code || '').trim()
+  if (!/^\d{6}$/.test(roomCode)) {
+    uni.showToast({ title: '无效的房间码', icon: 'none' })
+    return
+  }
+
+  if (!userStore.userInfo?.id) {
+    uni.setStorageSync('pending_room_code', roomCode)
+    uni.reLaunch({ url: '/pages/login/login' })
+    return
+  }
+
+  uni.showLoading({ title: '加入中...' })
+  try {
+    const joinRes: any = await request({
+      url: '/room/join',
+      method: 'POST',
+      data: {
+        userId: userStore.userInfo.id,
+        roomCode
+      }
+    })
+
+    if (joinRes.success) {
+      roomId.value = joinRes.data.id
+      userStore.setLastRoomId(roomId.value)
+      await fetchRoomInfo()
+      initSocket()
+    }
+  } catch (e: any) {
+    console.error(e)
+    if (e?.data?.message) {
+      uni.showToast({ title: e.data.message, icon: 'none' })
+    }
+  } finally {
+    uni.hideLoading()
+  }
+}
+
 onLoad(async (options: any) => {
-  if (options.id) {
-    roomId.value = options.id
+  const id = String(options?.id || '').trim()
+  if (id) {
+    roomId.value = id
     userStore.setLastRoomId(roomId.value)
     await fetchRoomInfo()
     initSocket()
+    if (options.isNew === 'true') {
+      openInviteModal()
+    }
+    return
   }
+
+  const roomCode = extractRoomCode(options)
+  if (roomCode) {
+    await joinRoomByCodeAndEnter(roomCode)
+    return
+  }
+
+  uni.showToast({ title: '缺少房间信息', icon: 'none' })
 })
 
 // 分享给好友
 onShareAppMessage(() => {
   return {
     title: `来来来，加入房间[${roomInfo.value?.code}]一起打牌！`,
-    path: `/pages/home/home?action=join&roomCode=${roomInfo.value?.code}`,
+    path: `/pages/room/room?roomCode=${roomInfo.value?.code}`,
     imageUrl: '/static/share-cover.png' // 可选：自定义分享图片
   }
 })
@@ -190,11 +362,11 @@ const initSocket = () => {
   })
   
   socketService.on('players-updated', (updatedPlayers: any[]) => {
-    setPlayers(updatedPlayers)
+    void setPlayersAsync(updatedPlayers)
   })
 
   socketService.on('transaction-updated', (data: any) => {
-    setPlayers(data.players)
+    void setPlayersAsync(data.players)
     uni.showToast({
       title: '新交易已记录',
       icon: 'success'
@@ -211,10 +383,42 @@ const fetchRoomInfo = async () => {
     const res: any = await request({ url: `/room/${roomId.value}` })
     if (res.success) {
       roomInfo.value = res.data
-      setPlayers(res.data.players)
+      await setPlayersAsync(res.data.players)
     }
   } catch (error) {
     console.error(error)
+  }
+}
+
+const openInviteModal = async () => {
+  showInviteModal.value = true
+  if (qrCodeImage.value) return
+  if (!roomInfo.value?.code) {
+    await fetchRoomInfo()
+  }
+  if (!roomInfo.value?.code) return
+  try {
+    const res: any = await request({
+      url: '/room/qrcode',
+      method: 'POST',
+      data: { roomCode: roomInfo.value.code }
+    })
+    if (res.success) {
+      qrCodeImage.value = res.data
+    }
+  } catch (e) {
+    console.error(e)
+    uni.showToast({ title: '二维码生成失败', icon: 'none' })
+  }
+}
+
+const closeInviteModal = () => {
+  showInviteModal.value = false
+}
+
+const onPlayerAvatarError = (player: any) => {
+  if (player && player.displayAvatar) {
+    player.displayAvatar = ''
   }
 }
 
@@ -261,6 +465,7 @@ const onPayeeChange = (e: any) => {
 }
 
 const confirmPayment = async () => {
+  if (isPaying.value) return
   if (!selectedPayer.value || !selectedPayee.value || !amount.value || amount.value === '-') {
     uni.showToast({ title: '请填写完整', icon: 'none' })
     return
@@ -280,6 +485,8 @@ const confirmPayment = async () => {
     return
   }
 
+  isPaying.value = true
+  uni.showLoading({ title: '支付中...' })
   try {
     const res: any = await request({
       url: '/transaction/create',
@@ -296,7 +503,7 @@ const confirmPayment = async () => {
     if (res.success) {
       // 1. 立即更新本地视图（确保操作者立刻看到变化）
       if (res.data.players) {
-        setPlayers(res.data.players)
+        await setPlayersAsync(res.data.players)
       }
 
       // 2. 通过 Socket 发送更新通知（通知其他人）
@@ -309,6 +516,10 @@ const confirmPayment = async () => {
     }
   } catch (error) {
     console.error(error)
+    uni.showToast({ title: '支付失败', icon: 'none' })
+  } finally {
+    uni.hideLoading()
+    isPaying.value = false
   }
 }
 
@@ -571,6 +782,67 @@ const endGame = () => {
   background: #2a2a40;
   border-radius: 20rpx;
   padding: 40rpx;
+}
+
+.invite-modal-content {
+  width: 600rpx;
+  background: #fff;
+  color: #333;
+  border-radius: 24rpx;
+  padding: 40rpx;
+  position: relative;
+}
+
+.invite-header {
+  text-align: center;
+  margin-bottom: 40rpx;
+  position: relative;
+}
+
+.invite-title {
+  font-size: 36rpx;
+  font-weight: bold;
+}
+
+.close-btn {
+  position: absolute;
+  right: -20rpx;
+  top: -20rpx;
+  font-size: 48rpx;
+  color: #999;
+  padding: 20rpx;
+  line-height: 1;
+}
+
+.qrcode-container {
+  width: 400rpx;
+  height: 400rpx;
+  margin: 0 auto 60rpx;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qrcode-image {
+  width: 100%;
+  height: 100%;
+}
+
+.loading-text {
+  position: absolute;
+  color: #999;
+  font-size: 28rpx;
+}
+
+.share-btn {
+  background: #e64340;
+  color: #fff;
+  border-radius: 999rpx;
+  font-size: 32rpx;
+  font-weight: bold;
+  height: 88rpx;
+  line-height: 88rpx;
 }
 
 .modal-title {
