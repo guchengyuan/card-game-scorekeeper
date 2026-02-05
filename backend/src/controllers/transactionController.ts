@@ -6,14 +6,24 @@ const INT32_MIN = -2147483648;
 
 const toNumber = (val: any) => Number(val);
 
-const isSafeInt32 = (n: number) => Number.isInteger(n) && n >= INT32_MIN && n <= INT32_MAX;
+const isSafeNumeric = (n: number) => Number.isFinite(n) && n >= INT32_MIN && n <= INT32_MAX;
 
 const toChineseDbErrorMessage = (err: any) => {
   const msg = String(err?.message || '');
   const code = String(err?.code || '');
 
-  if (code === '22003' || msg.includes('out of range for type integer')) {
+  if (code === '22003' || msg.includes('out of range')) {
     return '金额过大，请输入更小的数字';
+  }
+
+  if (
+    code === '22P02' ||
+    code === '42804' ||
+    msg.includes('invalid input syntax') ||
+    msg.includes('for type integer') ||
+    msg.includes('for type bigint')
+  ) {
+    return '当前数据库金额字段未启用小数，请先执行数据库迁移';
   }
 
   if (code === '23514' || msg.includes('violates check constraint')) {
@@ -26,6 +36,7 @@ const toChineseDbErrorMessage = (err: any) => {
 export const createTransaction = async (req: Request, res: Response) => {
   const { roomId, fromPlayerId, toPlayerId, amount, description } = req.body;
   const numAmount = Number(amount);
+  const amount2 = Number(numAmount.toFixed(2));
 
   try {
     if (!roomId || !fromPlayerId || !toPlayerId) {
@@ -36,15 +47,15 @@ export const createTransaction = async (req: Request, res: Response) => {
       res.status(400).json({ success: false, message: '付款人和收款人不能相同' });
       return;
     }
-    if (!Number.isFinite(numAmount) || !Number.isInteger(numAmount)) {
+    if (!Number.isFinite(amount2)) {
       res.status(400).json({ success: false, message: '请输入正确金额' });
       return;
     }
-    if (numAmount <= 0) {
+    if (amount2 <= 0) {
       res.status(400).json({ success: false, message: '金额必须大于0' });
       return;
     }
-    if (numAmount > INT32_MAX) {
+    if (amount2 > INT32_MAX) {
       res.status(400).json({ success: false, message: '金额过大，请输入更小的数字' });
       return;
     }
@@ -56,7 +67,7 @@ export const createTransaction = async (req: Request, res: Response) => {
         room_id: roomId, 
         from_player_id: fromPlayerId, 
         to_player_id: toPlayerId, 
-        amount: numAmount, 
+        amount: amount2, 
         description 
       })
       .select()
@@ -78,10 +89,11 @@ export const createTransaction = async (req: Request, res: Response) => {
         return;
       }
 
-      const nextFrom = fromBalance - numAmount;
-      const nextTo = toBalance + numAmount;
+      // 保留两位小数
+      const nextFrom = Number((fromBalance - amount2).toFixed(2));
+      const nextTo = Number((toBalance + amount2).toFixed(2));
 
-      if (!isSafeInt32(nextFrom) || !isSafeInt32(nextTo)) {
+      if (!isSafeNumeric(nextFrom) || !isSafeNumeric(nextTo)) {
         res.status(400).json({ success: false, message: '积分变化后超出范围，请输入更小的金额' });
         return;
       }

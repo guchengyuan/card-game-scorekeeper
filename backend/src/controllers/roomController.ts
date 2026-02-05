@@ -16,17 +16,24 @@ const generateRoomCode = () => {
 };
 
 export const createRoom = async (req: Request, res: Response) => {
-  const { userId, name, maxPlayers } = req.body;
+  const { userId, name, maxPlayers, password } = req.body;
 
   try {
+    const pwd = String(password || '').trim();
+    const shouldSetPassword = pwd.length > 0;
+    if (shouldSetPassword && !/^\d{6}$/.test(pwd)) {
+      return res.status(400).json({ success: false, message: '密码需为6位数字' });
+    }
+
     const code = generateRoomCode();
     
-    // 创建房间 (无密码)
+    // 创建房间
     const { data: room, error: roomError } = await supabase
       .from('rooms')
       .insert({ 
         name, 
-        code, 
+        code,
+        ...(shouldSetPassword ? { password: pwd } : {}),
         owner_id: userId, 
         max_players: maxPlayers || 4 
       })
@@ -64,9 +71,11 @@ export const createRoom = async (req: Request, res: Response) => {
 };
 
 export const joinRoom = async (req: Request, res: Response) => {
-  const { userId, roomCode } = req.body;
+  const { userId, roomCode, password } = req.body;
 
   try {
+    const pwd = String(password || '').trim();
+
     // 查找房间
     const { data: room, error: roomError } = await supabase
       .from('rooms')
@@ -76,6 +85,20 @@ export const joinRoom = async (req: Request, res: Response) => {
 
     if (roomError || !room) {
       return res.status(404).json({ success: false, message: '房间不存在，请检查房间号' });
+    }
+
+    if (room.status === 'finished') {
+      return res.status(400).json({ success: false, message: '房间已解散' });
+    }
+
+    const roomPwd = String(room.password || '000000');
+    if (roomPwd !== '000000') {
+      if (!/^\d{6}$/.test(pwd)) {
+        return res.status(400).json({ success: false, message: '请输入房间密码' });
+      }
+      if (pwd !== roomPwd) {
+        return res.status(400).json({ success: false, message: '密码错误' });
+      }
     }
 
     // 检查房间是否已满
@@ -230,7 +253,7 @@ export const getRoomQRCode = async (req: Request, res: Response) => {
     // 1. 获取 Access Token
     const tokenUrl = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${appId}&secret=${appSecret}`;
     const tokenRes = await fetch(tokenUrl);
-    const tokenData = await tokenRes.json();
+    const tokenData = (await tokenRes.json()) as { access_token?: string; errcode?: number; errmsg?: string };
 
     if (!tokenData.access_token) {
       console.error('WeChat Token Error:', tokenData);

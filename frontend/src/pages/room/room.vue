@@ -49,8 +49,9 @@
     </view>
 
     <!-- 记账弹窗 -->
-    <view v-if="showPaymentModal" class="modal-mask">
-      <view class="modal-content">
+    <transition name="payment-modal">
+      <view v-if="showPaymentModal" class="modal-mask payment-modal-mask">
+        <view class="modal-content payment-modal-content">
         <text class="modal-title">记一笔</text>
 
         <view class="payee-header">
@@ -81,21 +82,29 @@
         </view>
 
         <view class="amount-section">
-          <text class="amount-label">积分：</text>
-          <input type="text" v-model="amount" class="amount-input" placeholder="输入积分" @input="onAmountInput" />
+          <input
+            type="digit"
+            v-model="amount"
+            class="amount-input"
+            placeholder="输入积分"
+            confirm-type="done"
+            @input="onAmountInput"
+            @confirm="confirmPayment"
+          />
         </view>
 
         <view class="modal-actions">
           <button class="btn cancel" @click="closePaymentModal">取消</button>
           <button class="btn confirm" :disabled="isPaying" @click="confirmPayment">确认</button>
         </view>
+        </view>
       </view>
-    </view>
+    </transition>
   </view>
 </template>
 
 <script setup lang="ts">
-import { onLoad, onUnload, onShow, onHide, onShareAppMessage } from '@dcloudio/uni-app'
+import { onLoad, onUnload, onShow, onHide, onShareAppMessage, onShareTimeline } from '@dcloudio/uni-app'
 import { ref, computed } from 'vue'
 import { useUserStore } from '../../stores/user'
 import { request } from '../../utils/request'
@@ -110,6 +119,7 @@ const showPaymentModal = ref(false)
 const showInviteModal = ref(false)
 const qrCodeImage = ref('')
 let syncTimer: any = null
+const exitRequested = ref(false)
 
 // 记账表单
 const selectedPayer = ref<any>(null)
@@ -201,9 +211,13 @@ const setPlayersAsync = async (list: any[]) => {
   players.value = next
 }
 
+const isPlayerOnline = (val: any) => {
+  return val === true || val === 1 || val === 'true'
+}
+
 // 直接使用 players，不再进行客户端重排序，保证所有端看到的一致
 const orderedPlayers = computed(() => {
-  return players.value || []
+  return (players.value || []).filter((p: any) => isPlayerOnline(p?.is_online))
 })
 
 const getPayeeOptions = computed(() => {
@@ -310,7 +324,15 @@ onShareAppMessage(() => {
   return {
     title: `来来来，加入房间[${roomInfo.value?.code}]一起打牌！`,
     path: `/pages/room/room?roomCode=${roomInfo.value?.code}`,
-    imageUrl: '/static/share-cover.png' // 可选：自定义分享图片
+    imageUrl: '/static/share-cover.jpg'
+  }
+})
+
+onShareTimeline(() => {
+  return {
+    title: `来来来，加入房间[${roomInfo.value?.code}]一起打牌！`,
+    query: `roomCode=${roomInfo.value?.code}`,
+    imageUrl: '/static/share-cover.jpg'
   }
 })
 
@@ -319,6 +341,7 @@ onUnload(() => {
     clearInterval(syncTimer)
     syncTimer = null
   }
+  if (exitRequested.value) return
   socketService.leaveRoom(roomId.value, userStore.userInfo.id)
 })
 
@@ -375,6 +398,14 @@ const initSocket = () => {
 
   socketService.on('room-updated', (updatedRoom: any) => {
     roomInfo.value = { ...(roomInfo.value || {}), ...(updatedRoom || {}) }
+  })
+
+  socketService.on('room-dissolved', () => {
+    userStore.clearLastRoomId()
+    uni.showToast({ title: '房间已解散', icon: 'none' })
+    setTimeout(() => {
+      uni.reLaunch({ url: '/pages/home/home' })
+    }, 300)
   })
 }
 
@@ -451,12 +482,18 @@ const closePaymentModal = () => {
 }
 
 const onAmountInput = (e: any) => {
-  const raw = String(e?.detail?.value ?? '')
-  const normalized = raw.replace(/[－−–—﹣⁻]/g, '-')
-  const filtered = normalized.replace(/[^\d-]/g, '')
-  const isNegative = filtered.startsWith('-')
-  const digits = filtered.replace(/-/g, '')
-  amount.value = (isNegative ? '-' : '') + digits
+  let val = String(e?.detail?.value ?? '')
+  // 只允许数字和小数点
+  val = val.replace(/[^\d.]/g, '')
+  // 保证只有一个小数点
+  const parts = val.split('.')
+  if (parts.length > 2) {
+    val = parts[0] + '.' + parts.slice(1).join('')
+  }
+  // 延迟更新以确保视图同步
+  setTimeout(() => {
+    amount.value = val
+  }, 0)
 }
 
 const onPayeeChange = (e: any) => {
@@ -551,8 +588,13 @@ const endGame = () => {
   uni.showModal({
     title: '结束游戏',
     content: '确定要结束本局游戏并结算吗？',
-    success: (res) => {
+    success: async (res) => {
       if (res.confirm) {
+        exitRequested.value = true
+        const ack = await socketService.emitWithAck('exit-room', { roomId: roomId.value, userId: userStore.userInfo.id })
+        if (!ack) {
+          socketService.leaveRoom(roomId.value, userStore.userInfo.id)
+        }
         uni.reLaunch({
           url: `/pages/settlement/settlement?roomId=${roomId.value}`
         })
@@ -777,11 +819,37 @@ const endGame = () => {
   z-index: 100;
 }
 
+.payment-modal-mask {
+  align-items: flex-start;
+  padding-top: 100rpx;
+}
+
 .modal-content {
   width: 80%;
   background: #2a2a40;
   border-radius: 20rpx;
-  padding: 40rpx;
+  padding: 30rpx;
+}
+
+.payment-modal-enter-active,
+.payment-modal-leave-active {
+  transition: opacity 220ms ease;
+}
+
+.payment-modal-enter-from,
+.payment-modal-leave-to {
+  opacity: 0;
+}
+
+.payment-modal-enter-active .payment-modal-content,
+.payment-modal-leave-active .payment-modal-content {
+  transition: transform 220ms cubic-bezier(0.18, 0.89, 0.32, 1.2), opacity 220ms ease;
+}
+
+.payment-modal-enter-from .payment-modal-content,
+.payment-modal-leave-to .payment-modal-content {
+  transform: scale(0.92);
+  opacity: 0;
 }
 
 .invite-modal-content {
@@ -850,7 +918,7 @@ const endGame = () => {
   font-weight: bold;
   text-align: center;
   display: block;
-  margin-bottom: 40rpx;
+  margin-bottom: 20rpx;
 }
 
 .form-item {
@@ -876,7 +944,7 @@ const endGame = () => {
 .modal-actions {
   display: flex;
   gap: 20rpx;
-  margin-top: 40rpx;
+  margin-top: 30rpx;
 }
 
 .btn {
@@ -894,17 +962,22 @@ const endGame = () => {
   color: #fff;
 }
 
+.confirm[disabled] {
+  background: rgba(123, 104, 238, 0.6) !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
 /* 新版记账弹窗样式 */
 .payee-header {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 40rpx;
+  margin-bottom: 20rpx;
 }
 
 .avatar-large {
-  width: 120rpx;
-  height: 120rpx;
+  width: 100rpx;
+  height: 100rpx;
   border-radius: 50%;
   border: 4rpx solid #7b68ee;
   margin-bottom: 16rpx;
@@ -920,7 +993,7 @@ const endGame = () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 40rpx;
+  margin-bottom: 20rpx;
   padding: 0 20rpx;
 }
 
@@ -932,8 +1005,8 @@ const endGame = () => {
 }
 
 .avatar-small {
-  width: 80rpx;
-  height: 80rpx;
+  width: 70rpx;
+  height: 70rpx;
   border-radius: 50%;
   margin-bottom: 10rpx;
   border: 2rpx solid #666;
@@ -970,7 +1043,7 @@ const endGame = () => {
 }
 
 .amount-section {
-  margin-bottom: 40rpx;
+  margin-bottom: 30rpx;
   display: flex;
   align-items: center;
   gap: 20rpx;

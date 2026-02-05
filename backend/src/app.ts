@@ -36,13 +36,29 @@ app.get('/', (req, res) => {
 // WebSocket logic
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
+  let currentRoomId: string | null = null;
+  let currentUserId: string | null = null;
 
   socket.on('join-room', async ({ roomId, userId }) => {
     socket.join(roomId);
     console.log(`User ${userId} joined room ${roomId}`);
+    currentRoomId = roomId;
+    currentUserId = userId;
 
     // 更新用户在线状态
     try {
+      const { data: room, error: roomError } = await supabase
+        .from('rooms')
+        .select('status')
+        .eq('id', roomId)
+        .single();
+      if (roomError) throw roomError;
+      if (room?.status === 'finished') {
+        socket.leave(roomId);
+        socket.emit('room-dissolved', { roomId });
+        return;
+      }
+
       await supabase
         .from('players')
         .update({ is_online: true })
@@ -105,6 +121,10 @@ io.on('connection', (socket) => {
   socket.on('leave-room', async ({ roomId, userId }) => {
     socket.leave(roomId);
     console.log(`User ${userId} left room ${roomId}`);
+    if (currentRoomId === roomId && currentUserId === userId) {
+      currentRoomId = null;
+      currentUserId = null;
+    }
     
     try {
       await supabase
@@ -127,9 +147,13 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('exit-room', async ({ roomId, userId }) => {
+  socket.on('exit-room', async ({ roomId, userId }, ack?: (resp: any) => void) => {
     socket.leave(roomId);
     console.log(`User ${userId} exit room ${roomId}`);
+    if (currentRoomId === roomId && currentUserId === userId) {
+      currentRoomId = null;
+      currentUserId = null;
+    }
 
     try {
       const { data: room, error: roomError } = await supabase
@@ -143,26 +167,38 @@ io.on('connection', (socket) => {
 
       await supabase
         .from('players')
-        .delete()
+        .update({ is_online: false })
         .eq('user_id', userId)
         .eq('room_id', roomId);
 
-      if (wasOwner) {
-        const { data: nextPlayers, error: nextPlayersError } = await supabase
-          .from('players')
-          .select('user_id, joined_at')
-          .eq('room_id', roomId)
-          .not('user_id', 'is', null)
-          .order('joined_at', { ascending: true })
-          .limit(1);
-        if (nextPlayersError) throw nextPlayersError;
+      const { data: players, error: playersError } = await supabase
+        .from('players')
+        .select('*')
+        .eq('room_id', roomId)
+        .order('joined_at', { ascending: true });
+      if (playersError) throw playersError;
 
-        const nextOwnerId = nextPlayers?.[0]?.user_id ?? null;
+      const activeUsers = (players || []).filter((p: any) => !!p?.user_id && p.is_online);
+
+      if (wasOwner) {
+        const nextOwnerId = (players || [])
+          .filter((p: any) => !!p?.user_id && p.user_id !== userId)
+          .sort((a: any, b: any) => new Date(a.joined_at || 0).getTime() - new Date(b.joined_at || 0).getTime())
+          .map((p: any) => p.user_id)[0] ?? null;
+
         const { error: ownerUpdateError } = await supabase
           .from('rooms')
           .update({ owner_id: nextOwnerId })
           .eq('id', roomId);
         if (ownerUpdateError) throw ownerUpdateError;
+      }
+
+      if (activeUsers.length === 0) {
+        const { error: dissolveError } = await supabase
+          .from('rooms')
+          .update({ status: 'finished', owner_id: null })
+          .eq('id', roomId);
+        if (dissolveError) throw dissolveError;
       }
 
       const { data: updatedRoom, error: updatedRoomError } = await supabase
@@ -172,23 +208,56 @@ io.on('connection', (socket) => {
         .single();
       if (updatedRoomError) throw updatedRoomError;
 
-      const { data: players } = await supabase
-        .from('players')
-        .select('*')
-        .eq('room_id', roomId)
-        .order('joined_at', { ascending: true });
-
       if (players) {
         io.to(roomId).emit('players-updated', players);
       }
       io.to(roomId).emit('room-updated', updatedRoom);
+      ack?.({ success: true });
     } catch (err) {
       console.error('Error exiting room:', err);
+      ack?.({ success: false });
     }
   });
 
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
+    const roomId = currentRoomId;
+    const userId = currentUserId;
+    currentRoomId = null;
+    currentUserId = null;
+
+    if (!roomId || !userId) return;
+
+    (async () => {
+      try {
+        await supabase
+          .from('players')
+          .update({ is_online: false })
+          .eq('user_id', userId)
+          .eq('room_id', roomId);
+
+        const { data: players, error: playersError } = await supabase
+          .from('players')
+          .select('*')
+          .eq('room_id', roomId)
+          .order('joined_at', { ascending: true });
+        if (playersError) throw playersError;
+
+        const activeUsers = (players || []).filter((p: any) => !!p?.user_id && p.is_online);
+        if (activeUsers.length === 0) {
+          await supabase
+            .from('rooms')
+            .update({ status: 'finished', owner_id: null })
+            .eq('id', roomId);
+        }
+
+        if (players) {
+          io.to(roomId).emit('players-updated', players);
+        }
+      } catch (err) {
+        console.error('Error handling disconnect:', err);
+      }
+    })();
   });
 });
 

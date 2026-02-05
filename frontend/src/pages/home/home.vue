@@ -26,6 +26,61 @@ import { ref } from 'vue';
 
 const userStore = useUserStore();
 const myRoomDesc = ref('点击返回房间');
+const decodeScene = (input: any) => {
+  let str = String(input || '')
+  for (let i = 0; i < 2; i++) {
+    if (/%[0-9A-Fa-f]{2}/.test(str)) {
+      try {
+        str = decodeURIComponent(str)
+      } catch {
+        break
+      }
+    }
+  }
+  return str
+}
+
+const extractSixDigits = (text: string) => {
+  const raw = String(text || '')
+  const match = raw.match(/(^|[^0-9])(\d{6})(?!\d)/)
+  return match ? match[2] : ''
+}
+
+const extractQueryParam = (input: string, key: string) => {
+  const str = String(input || '')
+  const re = new RegExp(`[?&]${key}=([^&]*)`)
+  const m = str.match(re)
+  return m ? m[1] : ''
+}
+
+const extractRoomCodeFromText = (text: any) => {
+  const raw = decodeScene(text).trim()
+  if (/^\d{6}$/.test(raw)) return raw
+  const directDigits = extractSixDigits(raw)
+  if (directDigits) return directDigits
+  const m1 = raw.match(/[?&]roomCode=(\d{6})(?:$|&)/)
+  if (m1) return m1[1]
+  const sceneRaw = extractQueryParam(raw, 'scene')
+  if (sceneRaw) {
+    const scene = decodeScene(sceneRaw).trim()
+    if (/^\d{6}$/.test(scene)) return scene
+    const sceneDigits = extractSixDigits(scene)
+    if (sceneDigits) return sceneDigits
+    const mSceneRoomCode = scene.match(/(?:^|[?&])roomCode=(\d{6})(?:$|&)/)
+    if (mSceneRoomCode) return mSceneRoomCode[1]
+  }
+  return ''
+}
+
+const extractRoomCodeFromScanRes = (scanRes: any) => {
+  const codeFromPath = extractRoomCodeFromText(scanRes?.path || '')
+  if (codeFromPath) return codeFromPath
+  const codeFromResult = extractRoomCodeFromText(scanRes?.result || '')
+  if (codeFromResult) return codeFromResult
+  const codeFromRaw = extractRoomCodeFromText(scanRes?.rawData || '')
+  if (codeFromRaw) return codeFromRaw
+  return ''
+}
 
 onLoad((options: any) => {
   if (!userStore.userInfo?.id) {
@@ -146,24 +201,13 @@ const handlePrimaryCardClick = () => {
 const handleJoinRoom = () => {
   uni.scanCode({
     success: (res) => {
-      // 假设扫码内容是房间号，或者包含房间号的链接
-      // 这里做个简单处理：如果全是数字，当做房间号；如果是链接，解析 query
-      let code = res.result;
-      
-      // 尝试从链接中解析 roomCode 参数
-      if (code.includes('?')) {
-        const match = code.match(/[?&]roomCode=(\d+)/);
-        if (match) {
-          code = match[1];
-        }
+      const code = extractRoomCodeFromScanRes(res)
+      if (code) {
+        joinRoomByCode(code)
+        return
       }
-
-      // 如果是6位数字，直接加入
-      if (/^\d{6}$/.test(code)) {
-        joinRoomByCode(code);
-      } else {
-        uni.showToast({ title: '无效的房间码', icon: 'none' });
-      }
+      console.log('scanCode result:', res)
+      uni.showToast({ title: '无效的房间码', icon: 'none' })
     },
     fail: (err) => {
       // 用户取消扫码不提示错误

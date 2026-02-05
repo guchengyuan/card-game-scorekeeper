@@ -66,6 +66,30 @@ class SocketService {
     }
   }
 
+  emitWithAck(event: string, payload: any, timeoutMs = 800): Promise<any | null> {
+    return new Promise(resolve => {
+      const sock = this.socket
+      if (!sock || !sock.connected) {
+        resolve(null)
+        return
+      }
+
+      let settled = false
+      const timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        resolve(null)
+      }, timeoutMs)
+
+      sock.emit(event, payload, (resp: any) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(resp)
+      })
+    })
+  }
+
   on(event: string, callback: (data: any) => void) {
     if (this.socket) {
       this.socket.on(event, callback);
