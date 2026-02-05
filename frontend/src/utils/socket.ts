@@ -46,11 +46,23 @@ class SocketService {
     this.socket.on('connect_error', (err) => {
       console.log('Socket connect error:', (err as any)?.message || err);
     });
+
+    this.socket.on('KICK_DUPLICATE_LOGIN', () => {
+      console.warn('Received KICK_DUPLICATE_LOGIN');
+      uni.showModal({
+        title: '下线通知',
+        content: '您的账号已在其他设备登录，当前会话已断开',
+        showCancel: false,
+        success: () => {
+          uni.reLaunch({ url: '/pages/login/login' });
+        }
+      });
+    });
   }
 
-  joinRoom(roomId: string, userId: string) {
+  joinRoom(roomId: string, userId: string, token?: string) {
     if (this.socket) {
-      this.socket.emit('join-room', { roomId, userId });
+      this.socket.emit('join-room', { roomId, userId, token });
     }
   }
 

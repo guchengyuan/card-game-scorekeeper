@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { supabase } from '../config/db';
+import fetch from 'node-fetch';
 
 const normalizeAvatar = (avatarUrl: any) => {
   const val = String(avatarUrl || '').trim();
@@ -11,10 +12,33 @@ const normalizeAvatar = (avatarUrl: any) => {
 
 export const login = async (req: Request, res: Response) => {
   const { code, userInfo, openid: providedOpenid } = req.body;
+  
+  let openid = providedOpenid ? String(providedOpenid) : '';
 
-  // 在实际生产环境中，这里需要调用微信 API (jscode2session) 来获取 openid
-  // 为了演示方便，我们这里模拟一个 openid，或者直接使用客户端传来的 mock openid
-  const openid = providedOpenid ? String(providedOpenid) : `mock_openid_${code}`; 
+  // 尝试使用微信 API 获取真实 OpenID
+  if (code && process.env.WECHAT_APP_ID && process.env.WECHAT_APP_SECRET) {
+    try {
+      const appId = process.env.WECHAT_APP_ID;
+      const appSecret = process.env.WECHAT_APP_SECRET;
+      const url = `https://api.weixin.qq.com/sns/jscode2session?appid=${appId}&secret=${appSecret}&js_code=${code}&grant_type=authorization_code`;
+      
+      const wxRes = await fetch(url);
+      const wxData = (await wxRes.json()) as { openid?: string; session_key?: string; errcode?: number; errmsg?: string };
+
+      if (wxData.openid) {
+        openid = wxData.openid;
+      } else {
+        console.warn('WeChat jscode2session failed:', wxData);
+      }
+    } catch (err) {
+      console.error('Error fetching WeChat session:', err);
+    }
+  }
+
+  // 降级策略：如果没有真实 OpenID 且没有提供 mock openid，生成一个 mock 的
+  if (!openid) {
+     openid = `mock_openid_${code || Date.now()}`;
+  }
 
   try {
     // 检查用户是否存在

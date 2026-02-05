@@ -375,7 +375,7 @@ const stopSync = () => {
 
 const initSocket = () => {
   socketService.connect()
-  socketService.joinRoom(roomId.value, userStore.userInfo.id)
+  socketService.joinRoom(roomId.value, userStore.userInfo.id, userStore.token)
 
   socketService.socket?.on('connect', () => {
     stopSync()

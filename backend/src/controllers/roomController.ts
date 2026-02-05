@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { supabase } from '../config/db';
 import type { Server as SocketIOServer } from 'socket.io';
+import { SessionManager } from '../services/SessionManager';
 
 const normalizeAvatar = (avatar: any) => {
   const val = String(avatar || '').trim();
@@ -101,60 +102,93 @@ export const joinRoom = async (req: Request, res: Response) => {
       }
     }
 
-    // 检查房间是否已满
-    const { data: players, error: playersError } = await supabase
-      .from('players')
-      .select('*')
-      .eq('room_id', room.id)
-      .order('joined_at', { ascending: true });
-
-    if (playersError) throw playersError;
-
-    if (players.length >= room.max_players) {
-      return res.status(400).json({ success: false, message: '房间人数已满' });
+    // 并发控制
+    const sessionManager = SessionManager.getInstance();
+    const lockKey = `lock:join:${userId}:${room.id}`;
+    if (!await sessionManager.acquireLock(lockKey, 30)) {
+        return res.status(429).json({ success: false, message: '请求处理中，请勿重复操作' });
     }
 
-    // 检查是否已经加入
-    const existingPlayer = players.find((p: any) => p.user_id === userId);
-    if (existingPlayer) {
-      return res.json({ success: true, data: room, message: '您已在房间中' });
+    try {
+        // 检查活跃会话
+        const existingSocketId = sessionManager.getSession(userId, room.id);
+        if (existingSocketId) {
+             const io = (req.app.get('io') as SocketIOServer | undefined);
+             if (io) {
+               io.to(existingSocketId).emit('KICK_DUPLICATE_LOGIN');
+               io.sockets.sockets.get(existingSocketId)?.disconnect(true);
+             }
+             sessionManager.removeSession(userId, room.id);
+             await sessionManager.logSecurityEvent({
+                 userId,
+                 roomId: room.id,
+                 type: 'DUPLICATE_LOGIN_KICK',
+                 details: { reason: 'HTTP Join Request', oldSocketId: existingSocketId }
+             });
+             return res.status(409).json({ 
+                 success: false, 
+                 code: 'ERR_DUPLICATE_SESSION', 
+                 message: '账号已在其他设备登录，旧会话已断开，请重试' 
+             });
+        }
+
+        // 检查房间是否已满
+        const { data: players, error: playersError } = await supabase
+          .from('players')
+          .select('*')
+          .eq('room_id', room.id)
+          .order('joined_at', { ascending: true });
+
+        if (playersError) throw playersError;
+
+        if (players.length >= room.max_players) {
+          return res.status(400).json({ success: false, message: '房间人数已满' });
+        }
+
+        // 检查是否已经加入
+        const existingPlayer = players.find((p: any) => p.user_id === userId);
+        if (existingPlayer) {
+          return res.json({ success: true, data: room, message: '您已在房间中' });
+        }
+
+        // 获取用户信息
+        const { data: user, error: userError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
+        if (userError) throw userError;
+
+        // 加入房间
+        const { error: joinError } = await supabase
+          .from('players')
+          .insert({ 
+            user_id: userId, 
+            room_id: room.id, 
+            nickname: user.nickname, 
+            avatar: normalizeAvatar(user.avatar) 
+          });
+
+        if (joinError) throw joinError;
+
+        const io = (req.app.get('io') as SocketIOServer | undefined) ?? undefined;
+        if (io) {
+          const { data: latestPlayers } = await supabase
+            .from('players')
+            .select('*')
+            .eq('room_id', room.id)
+            .order('joined_at', { ascending: true });
+
+          if (latestPlayers) {
+            io.to(room.id).emit('players-updated', latestPlayers);
+          }
+        }
+
+        res.json({ success: true, data: room });
+    } finally {
+        await sessionManager.releaseLock(lockKey);
     }
-
-    // 获取用户信息
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single();
-
-    if (userError) throw userError;
-
-    // 加入房间
-    const { error: joinError } = await supabase
-      .from('players')
-      .insert({ 
-        user_id: userId, 
-        room_id: room.id, 
-        nickname: user.nickname, 
-        avatar: normalizeAvatar(user.avatar) 
-      });
-
-    if (joinError) throw joinError;
-
-    const io = (req.app.get('io') as SocketIOServer | undefined) ?? undefined;
-    if (io) {
-      const { data: latestPlayers } = await supabase
-        .from('players')
-        .select('*')
-        .eq('room_id', room.id)
-        .order('joined_at', { ascending: true });
-
-      if (latestPlayers) {
-        io.to(room.id).emit('players-updated', latestPlayers);
-      }
-    }
-
-    res.json({ success: true, data: room });
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ success: false, message: '加入房间失败' });

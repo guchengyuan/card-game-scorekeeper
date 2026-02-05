@@ -7,6 +7,7 @@ import userRoutes from './routes/userRoutes';
 import roomRoutes from './routes/roomRoutes';
 import transactionRoutes from './routes/transactionRoutes';
 import { supabase } from './config/db';
+import { SessionManager } from './services/SessionManager';
 
 dotenv.config();
 
@@ -39,7 +40,27 @@ io.on('connection', (socket) => {
   let currentRoomId: string | null = null;
   let currentUserId: string | null = null;
 
-  socket.on('join-room', async ({ roomId, userId }) => {
+  socket.on('join-room', async ({ roomId, userId, token }) => {
+    // 验证Token (简单实现)
+    if (token && token !== `mock_token_${userId}`) {
+       console.warn(`Invalid token for user ${userId}`);
+    }
+
+    // 并发连接控制
+    const sessionManager = SessionManager.getInstance();
+    const existingSocketId = sessionManager.getSession(userId, roomId);
+    if (existingSocketId && existingSocketId !== socket.id) {
+       io.to(existingSocketId).emit('KICK_DUPLICATE_LOGIN');
+       io.sockets.sockets.get(existingSocketId)?.disconnect(true);
+       await sessionManager.logSecurityEvent({
+           userId,
+           roomId,
+           type: 'DUPLICATE_LOGIN_KICK',
+           details: { reason: 'WebSocket Join', oldSocketId: existingSocketId, newSocketId: socket.id }
+       });
+    }
+    sessionManager.registerSession(userId, roomId, socket.id);
+
     socket.join(roomId);
     console.log(`User ${userId} joined room ${roomId}`);
     currentRoomId = roomId;
@@ -165,11 +186,22 @@ io.on('connection', (socket) => {
 
       const wasOwner = room?.owner_id === userId;
 
-      await supabase
+      // 尝试删除玩家（如果没有交易记录）
+      const { error: deleteError } = await supabase
         .from('players')
-        .update({ is_online: false })
+        .delete()
         .eq('user_id', userId)
         .eq('room_id', roomId);
+
+      if (deleteError) {
+        // 如果删除失败（例如有外键约束），则标记为下线
+        console.log('Delete player failed (likely due to FK), marking as offline:', deleteError.message);
+        await supabase
+          .from('players')
+          .update({ is_online: false })
+          .eq('user_id', userId)
+          .eq('room_id', roomId);
+      }
 
       const { data: players, error: playersError } = await supabase
         .from('players')
@@ -223,6 +255,11 @@ io.on('connection', (socket) => {
     console.log('User disconnected:', socket.id);
     const roomId = currentRoomId;
     const userId = currentUserId;
+    
+    if (userId && roomId) {
+      SessionManager.getInstance().removeSession(userId, roomId);
+    }
+
     currentRoomId = null;
     currentUserId = null;
 
