@@ -17,9 +17,7 @@
     {
       "path": "pages/room/room",
       "style": {
-        "navigationBarTitleText": "房间",
-        "enableShareAppMessage": true,
-        "enableShareTimeline": true
+        "navigationBarTitleText": "房间"
       }
     },
     {

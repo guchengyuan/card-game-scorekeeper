@@ -181,8 +181,10 @@ const handleCreateRoom = async () => {
         url: `/pages/room/room?id=${res.data.id}&isNew=true`
       });
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error(error);
+    const msg = String(error?.data?.message || error?.errMsg || error?.message || '创建房间失败')
+    uni.showToast({ title: msg, icon: 'none' })
   } finally {
     uni.hideLoading();
   }

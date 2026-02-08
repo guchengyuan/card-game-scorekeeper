@@ -5,6 +5,7 @@ interface UserState {
   userInfo: any;
   token: string;
   lastRoomId: string;
+  currentRoomCode: string;
 }
 
 export const useUserStore = defineStore('user', {
@@ -12,6 +13,7 @@ export const useUserStore = defineStore('user', {
     userInfo: uni.getStorageSync('userInfo') || null,
     token: uni.getStorageSync('token') || '',
     lastRoomId: uni.getStorageSync('lastRoomId') || '',
+    currentRoomCode: ''
   }),
   actions: {
     async login(code: string, userInfo: any) {
@@ -56,6 +58,9 @@ export const useUserStore = defineStore('user', {
     setLastRoomId(roomId: string) {
       this.lastRoomId = String(roomId || '');
       uni.setStorageSync('lastRoomId', this.lastRoomId);
+    },
+    setCurrentRoomCode(code: string) {
+      this.currentRoomCode = code;
     },
     clearLastRoomId() {
       this.lastRoomId = '';

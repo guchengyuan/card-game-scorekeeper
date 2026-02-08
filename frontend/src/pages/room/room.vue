@@ -48,6 +48,25 @@
       </view>
     </view>
 
+    <view v-if="showServerHostModal" class="modal-mask">
+      <view class="modal-content">
+        <text class="modal-title">设置服务器IP</text>
+        <view class="amount-section">
+          <input
+            type="text"
+            v-model="serverHostInput"
+            class="amount-input"
+            placeholder="例如 192.168.2.2:3000 或 https://192.168.2.2:443"
+            confirm-type="done"
+          />
+        </view>
+        <view class="modal-actions">
+          <button class="btn cancel" @click="closeServerHostModal">取消</button>
+          <button class="btn confirm" @click="confirmServerHost">保存</button>
+        </view>
+      </view>
+    </view>
+
     <!-- 记账弹窗 -->
     <transition name="payment-modal">
       <view v-if="showPaymentModal" class="modal-mask payment-modal-mask">
@@ -104,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { onLoad, onUnload, onShow, onHide, onShareAppMessage, onShareTimeline } from '@dcloudio/uni-app'
+import { onLoad, onUnload, onShow, onHide } from '@dcloudio/uni-app'
 import { ref, computed } from 'vue'
 import { useUserStore } from '../../stores/user'
 import { request } from '../../utils/request'
@@ -117,6 +136,8 @@ const roomInfo = ref<any>(null)
 const players = ref<any[]>([])
 const showPaymentModal = ref(false)
 const showInviteModal = ref(false)
+const showServerHostModal = ref(false)
+const serverHostInput = ref('')
 const qrCodeImage = ref('')
 let syncTimer: any = null
 const exitRequested = ref(false)
@@ -319,22 +340,7 @@ onLoad(async (options: any) => {
   uni.showToast({ title: '缺少房间信息', icon: 'none' })
 })
 
-// 分享给好友
-onShareAppMessage(() => {
-  return {
-    title: `来来来，加入房间[${roomInfo.value?.code}]一起打牌！`,
-    path: `/pages/room/room?roomCode=${roomInfo.value?.code}`,
-    imageUrl: '/static/share-cover.jpg'
-  }
-})
-
-onShareTimeline(() => {
-  return {
-    title: `来来来，加入房间[${roomInfo.value?.code}]一起打牌！`,
-    query: `roomCode=${roomInfo.value?.code}`,
-    imageUrl: '/static/share-cover.jpg'
-  }
-})
+// 分享给好友逻辑已移至 Options API 脚本块中，避免 script setup 的 onShareAppMessage 运行时错误
 
 onUnload(() => {
   if (syncTimer) {
@@ -383,6 +389,17 @@ const initSocket = () => {
   socketService.socket?.on('disconnect', () => {
     startSync()
   })
+  socketService.socket?.on('connect_error', (err: any) => {
+    const uri = (socketService.socket as any)?.io?.uri || ''
+    if (!uri) return
+    if (!/127\.0\.0\.1|localhost/i.test(uri)) return
+    const stored = uni.getStorageSync('server_host')
+    if (stored && String(stored).trim()) return
+    const message = String(err?.message || err?.errMsg || '')
+    if (!/timeout|connect|ECONNREFUSED|ERR_CONNECTION_REFUSED/i.test(message)) return
+    serverHostInput.value = ''
+    showServerHostModal.value = true
+  })
   
   socketService.on('players-updated', (updatedPlayers: any[]) => {
     void setPlayersAsync(updatedPlayers)
@@ -398,6 +415,9 @@ const initSocket = () => {
 
   socketService.on('room-updated', (updatedRoom: any) => {
     roomInfo.value = { ...(roomInfo.value || {}), ...(updatedRoom || {}) }
+    if (roomInfo.value?.code) {
+        userStore.setCurrentRoomCode(roomInfo.value.code)
+    }
   })
 
   socketService.on('room-dissolved', () => {
@@ -414,11 +434,76 @@ const fetchRoomInfo = async () => {
     const res: any = await request({ url: `/room/${roomId.value}` })
     if (res.success) {
       roomInfo.value = res.data
+      if (roomInfo.value?.code) {
+          userStore.setCurrentRoomCode(roomInfo.value.code)
+      }
       await setPlayersAsync(res.data.players)
     }
   } catch (error) {
     console.error(error)
   }
+}
+
+const closeServerHostModal = () => {
+  showServerHostModal.value = false
+}
+
+const confirmServerHost = () => {
+  let raw = String(serverHostInput.value || '').trim()
+  if (!raw) {
+    uni.showToast({ title: '请输入服务器地址', icon: 'none' })
+    return
+  }
+
+  let protocol = 'http'
+  if (/^https:\/\//i.test(raw)) {
+    protocol = 'https'
+    raw = raw.replace(/^https:\/\//i, '')
+  } else if (/^http:\/\//i.test(raw)) {
+    protocol = 'http'
+    raw = raw.replace(/^http:\/\//i, '')
+  }
+  raw = raw.replace(/\/.*$/, '')
+
+  const parts = raw.split(':')
+  const host = String(parts[0] || '').trim()
+  const portStr = String(parts[1] || '').trim()
+  const port = portStr ? Number(portStr) : 3000
+
+  if (!host) {
+    uni.showToast({ title: '请输入服务器地址', icon: 'none' })
+    return
+  }
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+    uni.showToast({ title: '端口不合法', icon: 'none' })
+    return
+  }
+
+  let isDevtools = false
+  try {
+    // #ifdef MP-WEIXIN
+    // @ts-ignore
+    const info = wx.getDeviceInfo ? wx.getDeviceInfo() : wx.getSystemInfoSync()
+    isDevtools = info?.platform === 'devtools'
+    // #endif
+
+    // #ifndef MP-WEIXIN
+    const info = uni.getSystemInfoSync()
+    isDevtools = info?.platform === 'devtools' || info?.model === 'devtools'
+    // #endif
+  } catch {}
+
+  if (isDevtools) {
+    uni.setStorageSync('server_host_devtools', host)
+    uni.setStorageSync('server_protocol_devtools', protocol)
+    uni.setStorageSync('server_port_devtools', port)
+  } else {
+    uni.setStorageSync('server_host', host)
+    uni.setStorageSync('server_protocol', protocol)
+    uni.setStorageSync('server_port', port)
+  }
+  showServerHostModal.value = false
+  uni.showToast({ title: '已保存，请重进房间', icon: 'none' })
 }
 
 const openInviteModal = async () => {
@@ -601,6 +686,31 @@ const endGame = () => {
       }
     }
   })
+}
+</script>
+
+<script lang="ts">
+import { useUserStore } from '../../stores/user'
+
+export default {
+  onShareAppMessage() {
+    const userStore = useUserStore()
+    const code = userStore.currentRoomCode || ''
+    return {
+      title: `来来来，加入房间[${code}]一起打牌！`,
+      path: `/pages/room/room?roomCode=${code}`,
+      imageUrl: '/static/share-cover.jpg'
+    }
+  },
+  onShareTimeline() {
+    const userStore = useUserStore()
+    const code = userStore.currentRoomCode || ''
+    return {
+      title: `来来来，加入房间[${code}]一起打牌！`,
+      query: `roomCode=${code}`,
+      imageUrl: '/static/share-cover.jpg'
+    }
+  }
 }
 </script>
 

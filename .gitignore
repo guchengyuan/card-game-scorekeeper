@@ -7,3 +7,4 @@ unpackage/
 .vscode/
 *.log
 .trae/
+backend/certs/

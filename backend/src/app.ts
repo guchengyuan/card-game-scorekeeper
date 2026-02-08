@@ -1,8 +1,10 @@
 import express from 'express';
-import { createServer } from 'http';
+import { createServer as createHttpServer } from 'http';
+import { createServer as createHttpsServer } from 'https';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import userRoutes from './routes/userRoutes';
 import roomRoutes from './routes/roomRoutes';
 import transactionRoutes from './routes/transactionRoutes';
@@ -12,8 +14,22 @@ import { SessionManager } from './services/SessionManager';
 dotenv.config();
 
 const app = express();
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
+
+const sslKeyPath = process.env.SSL_KEY_PATH;
+const sslCertPath = process.env.SSL_CERT_PATH;
+const useHttps = !!(sslKeyPath && sslCertPath);
+
+const server = useHttps
+  ? createHttpsServer(
+      {
+        key: fs.readFileSync(sslKeyPath!, 'utf8'),
+        cert: fs.readFileSync(sslCertPath!, 'utf8'),
+      },
+      app
+    )
+  : createHttpServer(app);
+
+const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
@@ -298,8 +314,8 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
-httpServer.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on ${useHttps ? 'https' : 'http'}://0.0.0.0:${PORT}`);
 });
