@@ -444,66 +444,21 @@ const fetchRoomInfo = async () => {
   }
 }
 
+const openServerHostModal = () => {
+  // 不再显示弹窗，直接提示已连接云端
+  uni.showToast({
+    title: '已连接云端服务',
+    icon: 'success',
+    duration: 2000
+  })
+}
+
 const closeServerHostModal = () => {
   showServerHostModal.value = false
 }
 
 const confirmServerHost = () => {
-  let raw = String(serverHostInput.value || '').trim()
-  if (!raw) {
-    uni.showToast({ title: '请输入服务器地址', icon: 'none' })
-    return
-  }
-
-  let protocol = 'http'
-  if (/^https:\/\//i.test(raw)) {
-    protocol = 'https'
-    raw = raw.replace(/^https:\/\//i, '')
-  } else if (/^http:\/\//i.test(raw)) {
-    protocol = 'http'
-    raw = raw.replace(/^http:\/\//i, '')
-  }
-  raw = raw.replace(/\/.*$/, '')
-
-  const parts = raw.split(':')
-  const host = String(parts[0] || '').trim()
-  const portStr = String(parts[1] || '').trim()
-  const port = portStr ? Number(portStr) : 3000
-
-  if (!host) {
-    uni.showToast({ title: '请输入服务器地址', icon: 'none' })
-    return
-  }
-  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
-    uni.showToast({ title: '端口不合法', icon: 'none' })
-    return
-  }
-
-  let isDevtools = false
-  try {
-    // #ifdef MP-WEIXIN
-    // @ts-ignore
-    const info = wx.getDeviceInfo ? wx.getDeviceInfo() : wx.getSystemInfoSync()
-    isDevtools = info?.platform === 'devtools'
-    // #endif
-
-    // #ifndef MP-WEIXIN
-    const info = uni.getSystemInfoSync()
-    isDevtools = info?.platform === 'devtools' || info?.model === 'devtools'
-    // #endif
-  } catch {}
-
-  if (isDevtools) {
-    uni.setStorageSync('server_host_devtools', host)
-    uni.setStorageSync('server_protocol_devtools', protocol)
-    uni.setStorageSync('server_port_devtools', port)
-  } else {
-    uni.setStorageSync('server_host', host)
-    uni.setStorageSync('server_protocol', protocol)
-    uni.setStorageSync('server_port', port)
-  }
-  showServerHostModal.value = false
-  uni.showToast({ title: '已保存，请重进房间', icon: 'none' })
+  // 逻辑已移除
 }
 
 const openInviteModal = async () => {

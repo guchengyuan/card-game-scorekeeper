@@ -22,48 +22,19 @@ const isDevToolsEnv = () => {
 }
 
 const getServerProtocol = () => {
-  if (isDevToolsEnv()) {
-    const devOverride = uni.getStorageSync('server_protocol_devtools')
-    if (devOverride) return String(devOverride)
-    return 'http'
-  }
-  const override = uni.getStorageSync('server_protocol')
-  if (override) return String(override)
-  return 'http'
+  // 强制使用 HTTPS（对应 WSS）
+  return 'https'
 }
 
 const getServerPort = () => {
-  const parsePort = (val: any) => {
-    const n = Number(String(val || '').trim())
-    if (!Number.isFinite(n)) return null
-    if (n <= 0 || n > 65535) return null
-    return Math.floor(n)
-  }
-
-  if (isDevToolsEnv()) {
-    const devOverride = parsePort(uni.getStorageSync('server_port_devtools'))
-    if (devOverride) return devOverride
-    return 3000
-  }
-
-  const override = parsePort(uni.getStorageSync('server_port'))
-  if (override) return override
-  return 3000
+  // 强制使用 443（云托管默认）
+  return 443
 }
 
 const getServerHost = () => {
-  if (isDevToolsEnv()) {
-    const devOverride = uni.getStorageSync('server_host_devtools')
-    if (devOverride) return String(devOverride)
-    return '127.0.0.1'
+    // 强制返回云托管域名（无论真机还是开发者工具）
+    return 'card-game-225112-8-1403978532.sh.run.tcloudbase.com'
   }
-
-  const override = uni.getStorageSync('server_host')
-  if (override) return String(override)
-
-  // @ts-ignore
-  return process.env.VITE_SERVER_IP || '127.0.0.1'
-}
 
 const getBaseUrl = () => `${getServerProtocol()}://${getServerHost()}:${getServerPort()}/api`
 
