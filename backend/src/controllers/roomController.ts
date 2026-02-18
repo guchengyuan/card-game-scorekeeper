@@ -3,6 +3,40 @@ import { supabase } from '../config/db';
 import type { Server as SocketIOServer } from 'socket.io';
 import { SessionManager } from '../services/SessionManager';
 
+// 微信 Token 缓存接口
+interface TokenCache {
+  access_token: string;
+  expires_at: number;
+}
+
+let tokenCache: TokenCache | null = null;
+
+// 辅助函数：获取并缓存 Access Token
+const getAccessToken = async (appId: string, appSecret: string): Promise<string> => {
+  const now = Date.now();
+  // 如果缓存存在且有效期大于5分钟，直接使用缓存
+  if (tokenCache && tokenCache.expires_at > now + 5 * 60 * 1000) {
+    return tokenCache.access_token;
+  }
+
+  const tokenUrl = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${appId}&secret=${appSecret}`;
+  const tokenRes = await fetch(tokenUrl);
+  const tokenData = (await tokenRes.json()) as { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
+
+  if (!tokenData.access_token) {
+    console.error('WeChat Token Error:', tokenData);
+    throw new Error(`获取微信令牌失败: ${tokenData.errmsg || 'Unknown error'}`);
+  }
+
+  // 缓存 Token (expires_in 通常为 7200秒)
+  tokenCache = {
+    access_token: tokenData.access_token,
+    expires_at: now + (tokenData.expires_in || 7200) * 1000
+  };
+
+  return tokenData.access_token;
+};
+
 const normalizeAvatar = (avatar: any) => {
   const val = String(avatar || '').trim();
   if (!val) return null;
@@ -284,27 +318,32 @@ export const getRoomQRCode = async (req: Request, res: Response) => {
       return res.status(500).json({ success: false, message: '服务器未配置微信密钥' });
     }
 
-    // 1. 获取 Access Token
-    const tokenUrl = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${appId}&secret=${appSecret}`;
-    const tokenRes = await fetch(tokenUrl);
-    const tokenData = (await tokenRes.json()) as { access_token?: string; errcode?: number; errmsg?: string };
-
-    if (!tokenData.access_token) {
-      console.error('WeChat Token Error:', tokenData);
-      return res.status(500).json({ success: false, message: '获取微信令牌失败' });
+    // 1. 获取 Access Token (使用缓存机制)
+    let accessToken: string;
+    try {
+        accessToken = await getAccessToken(appId, appSecret);
+    } catch (err: any) {
+        return res.status(500).json({ success: false, message: err.message });
     }
 
-    // 2. 生成小程序码 (getUnlimitedQRCode)
+    // 2. 确定环境版本
+    // 建议在环境变量中配置 WECHAT_ENV_VERSION=release (正式版) 或 develop (开发版)
+    // 如果未配置，默认使用 release 以保证生产环境正常
+    const envVersion = process.env.WECHAT_ENV_VERSION || 'release'; 
+
+    // 3. 生成小程序码 (getUnlimitedQRCode)
+    const qrUrl = `https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=${accessToken}`;
+    
     // 注意：scene 最大32个可见字符，只支持数字，大小写英文以及部分特殊字符
     // page 必须是已经发布的小程序存在的页面（否则报错），例如 "pages/room/room"
-    const qrUrl = `https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=${tokenData.access_token}`;
     const qrRes = await fetch(qrUrl, {
       method: 'POST',
       body: JSON.stringify({
         scene: `${roomCode}`,
         page: 'pages/room/room', // 扫码后跳转的页面
-        check_path: false, // 开发阶段设为 false，否则必须发布后才能生成
-        env_version: 'develop' // 开发版: develop, 体验版: trial, 正式版: release
+        check_path: false, // 即使设为 false，小程序也必须至少发布过一次代码
+        env_version: envVersion, // 根据环境变量动态设置
+        width: 430
       })
     });
 
@@ -315,15 +354,22 @@ export const getRoomQRCode = async (req: Request, res: Response) => {
     const arrayBuffer = await qrRes.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     
-    // 检查是否返回了错误 JSON
+    // 4. 增强错误检查：微信可能返回 JSON 格式的错误信息而不是图片
     try {
-      const jsonCheck = JSON.parse(buffer.toString());
-      if (jsonCheck.errcode) {
-        console.error('WeChat QRCode Error:', jsonCheck);
-        return res.status(500).json({ success: false, message: `生成失败: ${jsonCheck.errmsg}` });
+      const str = buffer.toString();
+      // 简单判断是否为 JSON 错误响应 (errcode 存在)
+      if (str.startsWith('{') && str.includes('"errcode"')) {
+          const jsonCheck = JSON.parse(str);
+          if (jsonCheck.errcode) {
+            console.error('WeChat QRCode Error:', jsonCheck);
+            let msg = jsonCheck.errmsg;
+            if (jsonCheck.errcode === 41030) msg = '页面不存在或小程序未发布(41030)';
+            if (jsonCheck.errcode === 40001) msg = '微信令牌无效(40001)';
+            return res.status(500).json({ success: false, message: `生成失败: ${msg}` });
+          }
       }
     } catch {
-      // 不是 JSON，说明是图片二进制，继续处理
+      // 解析失败说明是二进制图片数据，继续处理
     }
 
     const base64 = `data:image/jpeg;base64,${buffer.toString('base64')}`;
