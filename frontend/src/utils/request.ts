@@ -10,10 +10,11 @@ const getServerPort = () => {
 
 const getServerHost = () => {
   // 强制返回云托管域名
-  return 'card-game-225112-8-1403978532.sh.run.tcloudbase.com'
+  return 'api.gcy888.online'
 }
 
-const getBaseUrl = () => `${getServerProtocol()}://${getServerHost()}:${getServerPort()}/api`
+const getBaseUrl = () =>
+  `${getServerProtocol()}://${getServerHost()}${getServerPort() === 443 ? '' : `:${getServerPort()}`}/api`
 
 export const request = (options: UniApp.RequestOptions) => {
   return new Promise((resolve, reject) => {

@@ -331,52 +331,56 @@ export const getRoomQRCode = async (req: Request, res: Response) => {
     // 如果未配置，默认使用 release 以保证生产环境正常
     const envVersion = process.env.WECHAT_ENV_VERSION || 'release'; 
 
-    // 3. 生成小程序码 (getUnlimitedQRCode)
     const qrUrl = `https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=${accessToken}`;
-    
-    // 注意：scene 最大32个可见字符，只支持数字，大小写英文以及部分特殊字符
-    // page 必须是已经发布的小程序存在的页面（否则报错），例如 "pages/room/room"
-    const qrRes = await fetch(qrUrl, {
-      method: 'POST',
-      body: JSON.stringify({
-        scene: `${roomCode}`,
-        page: 'pages/room/room', // 扫码后跳转的页面
-        check_path: false, // 即使设为 false，小程序也必须至少发布过一次代码
-        env_version: envVersion, // 根据环境变量动态设置
-        width: 430
-      })
-    });
+
+    let qrRes: Awaited<ReturnType<typeof fetch>>;
+    try {
+      qrRes = await fetch(qrUrl, {
+        method: 'POST',
+        body: JSON.stringify({
+          scene: `${roomCode}`,
+          page: 'pages/room/room',
+          check_path: false,
+          env_version: envVersion,
+          width: 430
+        })
+      });
+    } catch (e: any) {
+      console.error('WeChat QRCode fetch error:', e);
+      return res.status(502).json({ success: false, message: `调用微信二维码接口失败: ${String(e?.message || e)}` });
+    }
 
     if (!qrRes.ok) {
-      return res.status(500).json({ success: false, message: '生成二维码网络错误' });
+      const text = await qrRes.text().catch(() => '');
+      console.error('WeChat QRCode http error:', qrRes.status, text);
+      return res.status(502).json({ success: false, message: `微信二维码接口返回异常: HTTP ${qrRes.status}` });
     }
 
     const arrayBuffer = await qrRes.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    
-    // 4. 增强错误检查：微信可能返回 JSON 格式的错误信息而不是图片
-    try {
-      const str = buffer.toString();
-      // 简单判断是否为 JSON 错误响应 (errcode 存在)
-      if (str.startsWith('{') && str.includes('"errcode"')) {
-          const jsonCheck = JSON.parse(str);
-          if (jsonCheck.errcode) {
-            console.error('WeChat QRCode Error:', jsonCheck);
-            let msg = jsonCheck.errmsg;
-            if (jsonCheck.errcode === 41030) msg = '页面不存在或小程序未发布(41030)';
-            if (jsonCheck.errcode === 40001) msg = '微信令牌无效(40001)';
-            return res.status(500).json({ success: false, message: `生成失败: ${msg}` });
-          }
+
+    const str = buffer.toString();
+    if (str.startsWith('{') && str.includes('"errcode"')) {
+      try {
+        const jsonCheck = JSON.parse(str);
+        if (jsonCheck?.errcode) {
+          console.error('WeChat QRCode Error:', jsonCheck);
+          let msg = String(jsonCheck.errmsg || '');
+          if (jsonCheck.errcode === 41030) msg = '页面不存在或小程序未发布(41030)';
+          if (jsonCheck.errcode === 40001) msg = '微信令牌无效(40001)';
+          if (jsonCheck.errcode === 40165) msg = 'scene 参数不合法(40165)';
+          return res.status(500).json({ success: false, message: `生成失败: ${msg || jsonCheck.errcode}` });
+        }
+      } catch (e) {
+        console.error('WeChat QRCode JSON parse error:', e);
       }
-    } catch {
-      // 解析失败说明是二进制图片数据，继续处理
     }
 
     const base64 = `data:image/jpeg;base64,${buffer.toString('base64')}`;
-    res.json({ success: true, data: base64 });
+    return res.json({ success: true, data: base64 });
 
   } catch (err: any) {
-    console.error(err);
-    res.status(500).json({ success: false, message: '生成二维码失败' });
+    console.error('getRoomQRCode error:', err);
+    return res.status(500).json({ success: false, message: `生成二维码失败: ${String(err?.message || err)}` });
   }
 };

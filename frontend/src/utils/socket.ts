@@ -1,8 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 
 const getServerProtocol = () => {
-  // 强制使用 WSS
-  return 'wss'
+  return 'https'
 }
 
 const getServerPort = () => {
@@ -12,7 +11,7 @@ const getServerPort = () => {
 
 const getServerHost = () => {
   // 强制返回云托管域名
-  return 'card-game-225112-8-1403978532.sh.run.tcloudbase.com'
+  return 'api.gcy888.online'
 }
 
 class SocketService {
@@ -20,7 +19,7 @@ class SocketService {
   private currentUrl: string | null = null
 
   connect() {
-    const url = `${getServerProtocol()}://${getServerHost()}:${getServerPort()}`
+    const url = `${getServerProtocol()}://${getServerHost()}${getServerPort() === 443 ? '' : `:${getServerPort()}`}`
     
     if (this.socket && this.currentUrl && this.currentUrl !== url) {
       this.socket.disconnect()
@@ -37,7 +36,7 @@ class SocketService {
     console.log('Connecting to socket url:', url);
     
     this.socket = io(url, {
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
       autoConnect: true,
       reconnection: true,
       reconnectionAttempts: 5,
