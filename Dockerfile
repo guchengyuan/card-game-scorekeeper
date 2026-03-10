@@ -3,6 +3,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+RUN apk add --no-cache ca-certificates && update-ca-certificates
+
 # 复制 backend 下的依赖文件到根目录
 COPY backend/package*.json ./
 RUN npm install
@@ -15,6 +17,8 @@ RUN npm run build
 FROM node:20-alpine
 
 WORKDIR /app
+
+RUN apk add --no-cache ca-certificates && update-ca-certificates
 
 # 复制 backend 下的依赖文件到根目录
 COPY backend/package*.json ./

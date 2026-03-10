@@ -11,7 +11,7 @@ const getServerPort = () => {
 
 const getServerHost = () => {
   // 强制返回云托管域名
-  return 'api.gcy888.online'
+  return 'card-game-prod-8gg6g5q2edce2ebf-1403978532.ap-shanghai.run.wxcloudrun.com'
 }
 
 class SocketService {

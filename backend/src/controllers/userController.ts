@@ -14,6 +14,8 @@ export const login = async (req: Request, res: Response) => {
   const { code, userInfo, openid: providedOpenid } = req.body;
   
   let openid = providedOpenid ? String(providedOpenid) : '';
+  const nickname = String(userInfo?.nickName || userInfo?.nickname || '').trim() || '游客';
+  const avatarUrl = userInfo?.avatarUrl || userInfo?.avatar;
 
   // 尝试使用微信 API 获取真实 OpenID
   if (code && process.env.WECHAT_APP_ID && process.env.WECHAT_APP_SECRET) {
@@ -56,8 +58,8 @@ export const login = async (req: Request, res: Response) => {
       const { data: updatedUser, error: updateError } = await supabase
         .from('users')
         .update({ 
-          nickname: userInfo.nickName, 
-          avatar: normalizeAvatar(userInfo?.avatarUrl), 
+          nickname, 
+          avatar: normalizeAvatar(avatarUrl), 
           updated_at: new Date().toISOString() 
         })
         .eq('id', existing.id)
@@ -72,8 +74,8 @@ export const login = async (req: Request, res: Response) => {
         .from('users')
         .insert({ 
           openid, 
-          nickname: userInfo.nickName, 
-          avatar: normalizeAvatar(userInfo?.avatarUrl) 
+          nickname, 
+          avatar: normalizeAvatar(avatarUrl) 
         })
         .select()
         .single();

@@ -10,7 +10,7 @@ const getServerPort = () => {
 
 const getServerHost = () => {
   // 强制返回云托管域名
-  return 'api.gcy888.online'
+  return 'card-game-225112-8-1403978532.sh.run.tcloudbase.com'
 }
 
 const getBaseUrl = () =>
