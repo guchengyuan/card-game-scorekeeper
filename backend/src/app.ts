@@ -45,6 +45,9 @@ app.use(express.json());
 app.use('/api/user', userRoutes);
 app.use('/api/room', roomRoutes);
 app.use('/api/transaction', transactionRoutes);
+app.use('/user', userRoutes);
+app.use('/room', roomRoutes);
+app.use('/transaction', transactionRoutes);
 
 app.get('/', (req, res) => {
   res.send('Card Game Scorekeeper API is running (Powered by Supabase)');
