@@ -1,6 +1,14 @@
 import { Request, Response } from 'express';
 import { supabase } from '../config/db';
 import fetch from 'node-fetch';
+import https from 'https';
+
+const createWeChatAgent = () => {
+  const pemBase64 = String(process.env.WECHAT_CA_CERT_PEM_BASE64 || '').trim();
+  const insecure = String(process.env.WECHAT_INSECURE_TLS || '').trim() === '1';
+  const ca = pemBase64 ? Buffer.from(pemBase64, 'base64').toString('utf8') : undefined;
+  return new https.Agent({ ...(ca ? { ca } : {}), rejectUnauthorized: !insecure });
+};
 
 const normalizeAvatar = (avatarUrl: any) => {
   const val = String(avatarUrl || '').trim();
@@ -24,7 +32,7 @@ export const login = async (req: Request, res: Response) => {
       const appSecret = process.env.WECHAT_APP_SECRET;
       const url = `https://api.weixin.qq.com/sns/jscode2session?appid=${appId}&secret=${appSecret}&js_code=${code}&grant_type=authorization_code`;
       
-      const wxRes = await fetch(url);
+      const wxRes = await fetch(url, { agent: createWeChatAgent() as any });
       const wxData = (await wxRes.json()) as { openid?: string; session_key?: string; errcode?: number; errmsg?: string };
 
       if (wxData.openid) {

@@ -2,6 +2,15 @@ import { Request, Response } from 'express';
 import { supabase } from '../config/db';
 import type { Server as SocketIOServer } from 'socket.io';
 import { SessionManager } from '../services/SessionManager';
+import fetch from 'node-fetch';
+import https from 'https';
+
+const createWeChatAgent = () => {
+  const pemBase64 = String(process.env.WECHAT_CA_CERT_PEM_BASE64 || '').trim();
+  const insecure = String(process.env.WECHAT_INSECURE_TLS || '').trim() === '1';
+  const ca = pemBase64 ? Buffer.from(pemBase64, 'base64').toString('utf8') : undefined;
+  return new https.Agent({ ...(ca ? { ca } : {}), rejectUnauthorized: !insecure });
+};
 
 // 微信 Token 缓存接口
 interface TokenCache {
@@ -19,14 +28,19 @@ const getAccessToken = async (appId: string, appSecret: string): Promise<string>
     return tokenCache.access_token;
   }
 
+  const wechatAgent = createWeChatAgent();
   const tokenUrl = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${appId}&secret=${appSecret}`;
   let tokenRes: Awaited<ReturnType<typeof fetch>>;
   try {
-    tokenRes = await fetch(tokenUrl);
+    tokenRes = await fetch(tokenUrl, { agent: wechatAgent as any });
   } catch (e: any) {
+    const insecure = String(process.env.WECHAT_INSECURE_TLS || '').trim() === '1';
+    const hasCustomCa = !!String(process.env.WECHAT_CA_CERT_PEM_BASE64 || '').trim();
     const causeCode = e?.cause?.code || e?.code || e?.errno;
     const causeMsg = e?.cause?.message || e?.message || String(e);
-    throw new Error(`获取微信令牌失败: fetch failed${causeCode ? ` (${causeCode})` : ''} ${causeMsg}`);
+    throw new Error(
+      `获取微信令牌失败: fetch failed${causeCode ? ` (${causeCode})` : ''} ${causeMsg} [tls_insecure=${insecure ? 1 : 0}, tls_custom_ca=${hasCustomCa ? 1 : 0}]`
+    );
   }
 
   let tokenData: { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
@@ -347,9 +361,11 @@ export const getRoomQRCode = async (req: Request, res: Response) => {
     const qrUrl = `https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=${accessToken}`;
 
     let qrRes: Awaited<ReturnType<typeof fetch>>;
+    const wechatAgent = createWeChatAgent();
     try {
       qrRes = await fetch(qrUrl, {
         method: 'POST',
+        agent: wechatAgent as any,
         body: JSON.stringify({
           scene: `${roomCode}`,
           page: 'pages/room/room',
