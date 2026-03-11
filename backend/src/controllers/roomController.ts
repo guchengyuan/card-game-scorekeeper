@@ -20,8 +20,21 @@ const getAccessToken = async (appId: string, appSecret: string): Promise<string>
   }
 
   const tokenUrl = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${appId}&secret=${appSecret}`;
-  const tokenRes = await fetch(tokenUrl);
-  const tokenData = (await tokenRes.json()) as { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
+  let tokenRes: Awaited<ReturnType<typeof fetch>>;
+  try {
+    tokenRes = await fetch(tokenUrl);
+  } catch (e: any) {
+    const causeCode = e?.cause?.code || e?.code || e?.errno;
+    const causeMsg = e?.cause?.message || e?.message || String(e);
+    throw new Error(`获取微信令牌失败: fetch failed${causeCode ? ` (${causeCode})` : ''} ${causeMsg}`);
+  }
+
+  let tokenData: { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
+  try {
+    tokenData = (await tokenRes.json()) as { access_token?: string; expires_in?: number; errcode?: number; errmsg?: string };
+  } catch (e: any) {
+    throw new Error(`获取微信令牌失败: 解析响应失败 (HTTP ${tokenRes.status})`);
+  }
 
   if (!tokenData.access_token) {
     console.error('WeChat Token Error:', tokenData);

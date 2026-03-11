@@ -479,7 +479,8 @@ const openInviteModal = async () => {
     }
   } catch (e) {
     console.error(e)
-    uni.showToast({ title: '二维码生成失败', icon: 'none' })
+    const msg = String((e as any)?.data?.message || (e as any)?.message || '').trim()
+    uni.showToast({ title: msg || '二维码生成失败', icon: 'none' })
   }
 }
 

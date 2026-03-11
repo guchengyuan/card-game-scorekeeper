@@ -11,7 +11,7 @@ const getServerPort = () => {
 
 const getServerHost = () => {
   // 强制返回云托管域名
-  return 'card-game-prod-8gg6g5q2edce2ebf-1403978532.ap-shanghai.run.wxcloudrun.com'
+  return 'api.gcy888.online'
 }
 
 class SocketService {
@@ -36,11 +36,11 @@ class SocketService {
     console.log('Connecting to socket url:', url);
     
     this.socket = io(url, {
-      transports: ['websocket'],
+      transports: ['websocket', 'polling'],
       autoConnect: true,
       reconnection: true,
       reconnectionAttempts: 5,
-      timeout: 10000,
+      timeout: 20000,
     });
 
     this.socket.on('connect', () => {
