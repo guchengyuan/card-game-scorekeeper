@@ -272,6 +272,42 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('end-game', async ({ roomId, userId }, ack?: (resp: any) => void) => {
+    try {
+      const { data: room, error: roomError } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('id', roomId)
+        .single();
+      if (roomError) throw roomError;
+
+      if (!room || room.owner_id !== userId) {
+        ack?.({ success: false, message: '仅房主可结束本局' });
+        return;
+      }
+
+      const { error: finishError } = await supabase
+        .from('rooms')
+        .update({ status: 'finished' })
+        .eq('id', roomId);
+      if (finishError) throw finishError;
+
+      const { data: updatedRoom, error: updatedRoomError } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('id', roomId)
+        .single();
+      if (updatedRoomError) throw updatedRoomError;
+
+      io.to(roomId).emit('room-updated', updatedRoom);
+      io.to(roomId).emit('game-ended', { roomId });
+      ack?.({ success: true });
+    } catch (err) {
+      console.error('Error ending game:', err);
+      ack?.({ success: false, message: '结束失败' });
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
     const roomId = currentRoomId;

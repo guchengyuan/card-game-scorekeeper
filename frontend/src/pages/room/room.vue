@@ -428,6 +428,16 @@ const initSocket = () => {
       uni.reLaunch({ url: '/pages/home/home' })
     }, 300)
   })
+
+  socketService.on('game-ended', (payload: any) => {
+    const rid = String(payload?.roomId || roomId.value || '').trim()
+    if (!rid) return
+    exitRequested.value = true
+    userStore.clearLastRoomId()
+    socketService.exitRoom(rid, userStore.userInfo.id)
+    socketService.disconnect()
+    uni.reLaunch({ url: `/pages/settlement/settlement?roomId=${rid}` })
+  })
 }
 
 const fetchRoomInfo = async () => {
@@ -633,9 +643,18 @@ const endGame = () => {
     success: async (res) => {
       if (res.confirm) {
         exitRequested.value = true
-        const ack = await socketService.emitWithAck('exit-room', { roomId: roomId.value, userId: userStore.userInfo.id })
-        if (!ack) {
-          socketService.leaveRoom(roomId.value, userStore.userInfo.id)
+        const ack = await socketService.emitWithAck(
+          'end-game',
+          { roomId: roomId.value, userId: userStore.userInfo.id },
+          5000
+        )
+        if (!ack?.success) {
+          const msg = String(ack?.message || '').trim()
+          if (msg) {
+            uni.showToast({ title: msg, icon: 'none' })
+            exitRequested.value = false
+            return
+          }
         }
         uni.reLaunch({
           url: `/pages/settlement/settlement?roomId=${roomId.value}`
