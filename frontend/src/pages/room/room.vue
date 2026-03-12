@@ -348,7 +348,8 @@ onUnload(() => {
     syncTimer = null
   }
   if (exitRequested.value) return
-  socketService.leaveRoom(roomId.value, userStore.userInfo.id)
+  socketService.exitRoom(roomId.value, userStore.userInfo.id)
+  socketService.disconnect()
 })
 
 onShow(() => {

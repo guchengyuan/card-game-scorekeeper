@@ -165,6 +165,7 @@ io.on('connection', (socket) => {
       currentRoomId = null;
       currentUserId = null;
     }
+    SessionManager.getInstance().removeSession(userId, roomId);
     
     try {
       await supabase
@@ -194,6 +195,7 @@ io.on('connection', (socket) => {
       currentRoomId = null;
       currentUserId = null;
     }
+    SessionManager.getInstance().removeSession(userId, roomId);
 
     try {
       const { data: room, error: roomError } = await supabase
