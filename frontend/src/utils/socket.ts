@@ -36,7 +36,7 @@ class SocketService {
     console.log('Connecting to socket url:', url);
     
     this.socket = io(url, {
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       autoConnect: true,
       reconnection: true,
       reconnectionAttempts: 5,

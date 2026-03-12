@@ -413,3 +413,50 @@ export const getRoomQRCode = async (req: Request, res: Response) => {
     return res.status(500).json({ success: false, message: `生成二维码失败: ${String(err?.message || err)}` });
   }
 };
+
+export const endGame = async (req: Request, res: Response) => {
+  const { roomId, userId } = req.body;
+  const rid = String(roomId || '').trim();
+  const uid = String(userId || '').trim();
+
+  if (!rid || !uid) {
+    return res.status(400).json({ success: false, message: '参数错误' });
+  }
+
+  try {
+    const { data: room, error: roomError } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('id', rid)
+      .single();
+    if (roomError) throw roomError;
+
+    if (!room || room.owner_id !== uid) {
+      return res.status(403).json({ success: false, message: '仅房主可结束本局' });
+    }
+
+    const { error: finishError } = await supabase
+      .from('rooms')
+      .update({ status: 'finished' })
+      .eq('id', rid);
+    if (finishError) throw finishError;
+
+    const { data: updatedRoom, error: updatedRoomError } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('id', rid)
+      .single();
+    if (updatedRoomError) throw updatedRoomError;
+
+    const io = (req.app.get('io') as SocketIOServer | undefined) ?? undefined;
+    if (io) {
+      io.to(rid).emit('room-updated', updatedRoom);
+      io.to(rid).emit('game-ended', { roomId: rid });
+    }
+
+    res.json({ success: true, data: updatedRoom });
+  } catch (err: any) {
+    console.error(err);
+    res.status(500).json({ success: false, message: '结束失败' });
+  }
+};

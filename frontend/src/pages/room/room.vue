@@ -445,6 +445,14 @@ const fetchRoomInfo = async () => {
     const res: any = await request({ url: `/room/${roomId.value}` })
     if (res.success) {
       roomInfo.value = res.data
+      if (String(res.data?.status || '') === 'finished') {
+        exitRequested.value = true
+        userStore.clearLastRoomId()
+        socketService.exitRoom(roomId.value, userStore.userInfo.id)
+        socketService.disconnect()
+        uni.reLaunch({ url: `/pages/settlement/settlement?roomId=${roomId.value}` })
+        return
+      }
       if (roomInfo.value?.code) {
           userStore.setCurrentRoomCode(roomInfo.value.code)
       }
@@ -649,8 +657,20 @@ const endGame = () => {
           5000
         )
         if (!ack?.success) {
-          const msg = String(ack?.message || '').trim()
-          if (msg) {
+          try {
+            const httpRes: any = await request({
+              url: '/room/end',
+              method: 'POST',
+              data: { roomId: roomId.value, userId: userStore.userInfo.id }
+            })
+            if (!httpRes?.success) {
+              const msg = String(httpRes?.message || ack?.message || '结束失败').trim()
+              uni.showToast({ title: msg, icon: 'none' })
+              exitRequested.value = false
+              return
+            }
+          } catch (e: any) {
+            const msg = String(e?.data?.message || e?.message || ack?.message || '结束失败').trim()
             uni.showToast({ title: msg, icon: 'none' })
             exitRequested.value = false
             return
