@@ -28,7 +28,8 @@
     <view class="action-bar">
       <button class="action-btn test-btn" @click="addMockPlayers">添加假人</button>
       <button class="action-btn record-btn" @click="viewRecords">记录</button>
-      <button class="action-btn end-btn" @click="endGame">结束</button>
+      <button class="action-btn end-btn" @click="exitRoom">退出</button>
+      <button v-if="isOwner" class="action-btn end-btn" @click="endGame">结束本局</button>
     </view>
 
     <!-- 邀请弹窗 -->
@@ -140,6 +141,7 @@ const showServerHostModal = ref(false)
 const serverHostInput = ref('')
 const qrCodeImage = ref('')
 let syncTimer: any = null
+let syncTick = 0
 const exitRequested = ref(false)
 
 // 记账表单
@@ -366,8 +368,10 @@ onHide(() => {
 const startSync = () => {
   if (syncTimer) return
   syncTimer = setInterval(() => {
+    syncTick = (syncTick + 1) % 10
     const connected = !!socketService.socket?.connected
-    if (!connected && roomId.value) {
+    if (!roomId.value) return
+    if (!connected || syncTick === 0) {
       fetchRoomInfo()
     }
   }, 3000)
@@ -378,6 +382,16 @@ const stopSync = () => {
     clearInterval(syncTimer)
     syncTimer = null
   }
+}
+
+const exitToSettlement = (rid: string) => {
+  const id = String(rid || '').trim()
+  if (!id) return
+  exitRequested.value = true
+  userStore.clearLastRoomId()
+  socketService.exitRoom(id, userStore.userInfo.id)
+  socketService.disconnect()
+  uni.reLaunch({ url: `/pages/settlement/settlement?roomId=${id}` })
 }
 
 const initSocket = () => {
@@ -419,6 +433,9 @@ const initSocket = () => {
     if (roomInfo.value?.code) {
         userStore.setCurrentRoomCode(roomInfo.value.code)
     }
+    if (String(roomInfo.value?.status || '').toLowerCase() === 'finished') {
+      exitToSettlement(roomId.value)
+    }
   })
 
   socketService.on('room-dissolved', () => {
@@ -432,11 +449,7 @@ const initSocket = () => {
   socketService.on('game-ended', (payload: any) => {
     const rid = String(payload?.roomId || roomId.value || '').trim()
     if (!rid) return
-    exitRequested.value = true
-    userStore.clearLastRoomId()
-    socketService.exitRoom(rid, userStore.userInfo.id)
-    socketService.disconnect()
-    uni.reLaunch({ url: `/pages/settlement/settlement?roomId=${rid}` })
+    exitToSettlement(rid)
   })
 }
 
@@ -445,12 +458,8 @@ const fetchRoomInfo = async () => {
     const res: any = await request({ url: `/room/${roomId.value}` })
     if (res.success) {
       roomInfo.value = res.data
-      if (String(res.data?.status || '') === 'finished') {
-        exitRequested.value = true
-        userStore.clearLastRoomId()
-        socketService.exitRoom(roomId.value, userStore.userInfo.id)
-        socketService.disconnect()
-        uni.reLaunch({ url: `/pages/settlement/settlement?roomId=${roomId.value}` })
+      if (String(res.data?.status || '').toLowerCase() === 'finished') {
+        exitToSettlement(roomId.value)
         return
       }
       if (roomInfo.value?.code) {
@@ -680,6 +689,21 @@ const endGame = () => {
           url: `/pages/settlement/settlement?roomId=${roomId.value}`
         })
       }
+    }
+  })
+}
+
+const exitRoom = () => {
+  uni.showModal({
+    title: '退出房间',
+    content: '确定要退出当前房间吗？',
+    success: (res) => {
+      if (!res.confirm) return
+      exitRequested.value = true
+      userStore.clearLastRoomId()
+      socketService.exitRoom(roomId.value, userStore.userInfo.id)
+      socketService.disconnect()
+      uni.reLaunch({ url: '/pages/home/home' })
     }
   })
 }

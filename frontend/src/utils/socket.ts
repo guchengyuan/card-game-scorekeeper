@@ -1,7 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 
 const getServerProtocol = () => {
-  return 'https'
+  return 'wss'
 }
 
 const getServerPort = () => {
